@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Any, Callable, Awaitable
 
@@ -151,7 +150,15 @@ class JobRunner:
                 result_text += event["delta"]
                 await send({"type": "token", "job_id": sub_job_id, "delta": event["delta"]})
             elif event["type"] == "usage":
-                await send({"type": "usage", "job_id": sub_job_id, **event, "cost_usd": 0.0})
+                sub_session.input_tokens += event["input_tokens"]
+                sub_session.output_tokens += event["output_tokens"]
+                await send({
+                    "type": "usage",
+                    "job_id": sub_job_id,
+                    "input_tokens": sub_session.input_tokens,
+                    "output_tokens": sub_session.output_tokens,
+                    "cost_usd": sub_session.cost_usd,
+                })
 
         await send({
             "type": "job_update",
