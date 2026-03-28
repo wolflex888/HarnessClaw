@@ -12,7 +12,8 @@ export class WsClient {
   }
 
   private connect(): void {
-    const url = `ws://${window.location.host}/ws`
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const url = `${protocol}//${window.location.host}/ws`
     this.ws = new WebSocket(url)
 
     this.ws.onmessage = (event) => {

@@ -124,9 +124,31 @@ export default function App() {
           ...prev,
           [agentId]: {
             ...existing,
-            input_tokens: msg.input_tokens,
-            output_tokens: msg.output_tokens,
-            cost_usd: msg.cost_usd,
+            input_tokens: existing.input_tokens + msg.input_tokens,
+            output_tokens: existing.output_tokens + msg.output_tokens,
+            cost_usd: existing.cost_usd + msg.cost_usd,
+          },
+        }
+      })
+    } else if (msg.type === 'tool_call') {
+      const agentId = jobAgentMap.current[msg.job_id]
+      if (!agentId) return
+
+      setSessions((prev) => {
+        const existing = prev[agentId] ?? emptySession('')
+        return {
+          ...prev,
+          [agentId]: {
+            ...existing,
+            messages: [
+              ...existing.messages,
+              {
+                id: nextId(),
+                role: 'assistant' as const,
+                content: '',
+                tool_calls: [{ tool_id: msg.tool_id, name: msg.name, input: msg.input }],
+              },
+            ],
           },
         }
       })
@@ -160,23 +182,20 @@ export default function App() {
     return () => wsRef.current?.destroy()
   }, [handleWsMessage])
 
-  function handleSend(text: string) {
+  const handleSend = useCallback((text: string) => {
     if (!activeAgentId) return
-
-    // Optimistically add user message
     setSessions((prev) => {
       const existing = prev[activeAgentId] ?? emptySession('')
       return {
         ...prev,
         [activeAgentId]: {
           ...existing,
-          messages: [...existing.messages, { id: nextId(), role: 'user', content: text }],
+          messages: [...existing.messages, { id: nextId(), role: 'user' as const, content: text }],
         },
       }
     })
-
     wsRef.current?.send({ type: 'chat', agent_id: activeAgentId, text })
-  }
+  }, [activeAgentId])
 
   async function handleSaveAgent(config: AgentConfig) {
     const isEdit = agents.some((a) => a.id === config.id)
@@ -188,7 +207,11 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     })
-    if (!res.ok) return
+    if (!res.ok) {
+      const body = await res.text().catch(() => 'Unknown error')
+      console.error('Failed to save agent:', res.status, body)
+      return
+    }
 
     const saved: AgentConfig = await res.json()
     setAgents((prev) =>
