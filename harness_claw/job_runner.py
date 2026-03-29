@@ -1,196 +1,145 @@
 from __future__ import annotations
 
-import uuid
+import asyncio
+import inspect
+import os
+from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from harness_claw.agent_registry import AgentConfig, AgentRegistry
-from harness_claw.providers.anthropic import AnthropicProvider
 from harness_claw.providers.base import BaseProvider
+from harness_claw.providers.claude_code import ClaudeCodeProvider
+from harness_claw.providers.anthropic import AnthropicProvider
+from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
+from harness_claw.session_store import SessionStore
 
 PROVIDERS: dict[str, BaseProvider] = {
     "anthropic": AnthropicProvider(),
+    "claude-code": ClaudeCodeProvider(),
 }
+
+Send = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+async def _call_send(send: Send, msg: dict[str, Any]) -> None:
+    result = send(msg)
+    if inspect.isawaitable(result):
+        await result
 
 
 class JobRunner:
-    def __init__(self, registry: AgentRegistry) -> None:
+    def __init__(self, registry: RoleRegistry, store: SessionStore) -> None:
         self._registry = registry
-        self._sessions: dict[str, Session] = {}  # keyed by agent_id
+        self._store = store
+        self._tasks: dict[str, asyncio.Task[None]] = {}  # job_id → task
 
-    def get_or_create_session(self, agent_id: str) -> Session:
-        if agent_id not in self._sessions:
-            agent = self._registry.get(agent_id)
-            self._sessions[agent_id] = Session(agent_id=agent_id, model=agent.model)
-        return self._sessions[agent_id]
+    def get_or_create_session(self, session_id: str) -> Session:
+        session = self._store.get(session_id)
+        if session is None:
+            raise KeyError(f"Session {session_id!r} not found")
+        return session
 
-    def get_session(self, agent_id: str) -> Session | None:
-        return self._sessions.get(agent_id)
-
-    async def run_job(
-        self,
-        agent_id: str,
-        text: str,
-        send: Callable[[dict[str, Any]], Awaitable[None]],
-    ) -> str:
-        job_id = str(uuid.uuid4())
-        agent = self._registry.get(agent_id)
-        session = self.get_or_create_session(agent_id)
-        provider = PROVIDERS[agent.provider]
-
-        session.add_user_message(text)
-        await send({
-            "type": "job_update",
-            "job_id": job_id,
-            "agent_id": agent_id,
-            "title": text[:60],
-            "status": "running",
-            "progress": None,
-        })
-
-        assistant_text = ""
-
+    async def run_job(self, session_id: str, text: str, send: Send) -> str:
+        # Register this task so kill_job() can cancel it
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._tasks[session_id] = current_task
         try:
-            if agent.orchestrates:
-                tools = [self._make_call_agent_tool(agent.orchestrates)]
+            session = self.get_or_create_session(session_id)
+            role = self._registry.get(session.role_id)
+            if role is None:
+                raise KeyError(f"Role {session.role_id!r} not found")
 
-                async def tool_executor(tool_name: str, tool_input: dict[str, Any]) -> str:
-                    if tool_name != "call_agent":
-                        return f"Error: unknown tool '{tool_name}'"
-                    sub_agent_id = tool_input["agent_id"]
-                    prompt = tool_input["prompt"]
-                    return await self._run_sub_agent(sub_agent_id, prompt, send)
+            job_id = f"job-{session_id[:8]}-{len(session.messages)}"
+            provider = PROVIDERS.get(role.provider, PROVIDERS["claude-code"])
 
-                async for event in provider.stream_with_tools(
-                    session.messages, agent.system_prompt, agent.model,
-                    tools, tool_executor, agent.max_tokens,
-                ):
-                    if event["type"] == "token":
-                        assistant_text += event["delta"]
-                        await send({"type": "token", "job_id": job_id, "delta": event["delta"]})
-                    elif event["type"] == "tool_call":
-                        await send({"type": "tool_call", "job_id": job_id, **event})
-                    elif event["type"] == "usage":
-                        session.input_tokens += event["input_tokens"]
-                        session.output_tokens += event["output_tokens"]
-                        await send({
-                            "type": "usage",
-                            "job_id": job_id,
-                            "input_tokens": session.input_tokens,
-                            "output_tokens": session.output_tokens,
-                            "cost_usd": session.cost_usd,
-                        })
-            else:
+            # Set session name from first user message
+            if not session.name and text:
+                session.name = text[:40]
+                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "running"})
+
+            session.add_user_message(text)
+            session.status = "running"
+            self._store.save(session)
+
+            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "running", "progress": None, "title": text[:40]})
+
+            full_response = ""
+            try:
                 async for event in provider.stream_chat(
-                    session.messages, agent.system_prompt, agent.model, agent.max_tokens,
+                    messages=session.messages,
+                    system=role.system_prompt,
+                    model=role.model,
+                    max_tokens=role.max_tokens,
+                    cwd=session.working_dir,
+                    claude_session_id=session.claude_session_id,
                 ):
                     if event["type"] == "token":
-                        assistant_text += event["delta"]
-                        await send({"type": "token", "job_id": job_id, "delta": event["delta"]})
+                        full_response += event["delta"]
+                        await _call_send(send, {"type": "token", "job_id": job_id, "delta": event["delta"]})
                     elif event["type"] == "usage":
                         session.input_tokens += event["input_tokens"]
                         session.output_tokens += event["output_tokens"]
-                        await send({
+                        await _call_send(send, {
                             "type": "usage",
                             "job_id": job_id,
                             "input_tokens": session.input_tokens,
                             "output_tokens": session.output_tokens,
                             "cost_usd": session.cost_usd,
                         })
+                    elif event["type"] == "session_init":
+                        session.claude_session_id = event["claude_session_id"]
+                    elif event["type"] == "permission_request":
+                        await _call_send(send, {
+                            "type": "permission_request",
+                            "session_id": session_id,
+                            "request_id": event["request_id"],
+                            "tool_name": event["tool_name"],
+                            "input": event["input"],
+                        })
+                    elif event["type"] == "error":
+                        await _call_send(send, {"type": "error", "job_id": job_id, "message": event["message"]})
 
-            session.add_assistant_message(assistant_text)
-            await send({
-                "type": "job_update",
-                "job_id": job_id,
-                "agent_id": agent_id,
-                "status": "completed",
-                "progress": None,
-            })
+            except asyncio.CancelledError:
+                session.status = "killed"
+                self._store.save(session)
+                await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "failed", "progress": None, "title": text[:40]})
+                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "killed"})
+                return ""
 
-        except Exception as exc:
-            await send({"type": "error", "job_id": job_id, "message": str(exc)})
-            await send({
-                "type": "job_update",
-                "job_id": job_id,
-                "agent_id": agent_id,
-                "status": "failed",
-                "progress": None,
-            })
+            session.add_assistant_message(full_response)
+            session.status = "idle"
+            self._store.save(session)
 
-        return job_id
+            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "completed", "progress": 100, "title": text[:40]})
+            await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "idle"})
+            return full_response
+        finally:
+            self._tasks.pop(session_id, None)
 
-    async def _run_sub_agent(
-        self,
-        agent_id: str,
-        prompt: str,
-        send: Callable[[dict[str, Any]], Awaitable[None]],
-    ) -> str:
-        sub_job_id = str(uuid.uuid4())
-        agent = self._registry.get(agent_id)
-        provider = PROVIDERS[agent.provider]
+    def resolve_permission(self, request_id: str, *, approved: bool) -> None:
+        provider = PROVIDERS.get("claude-code")
+        if isinstance(provider, ClaudeCodeProvider):
+            provider.resolve_permission(request_id, approved=approved)
 
-        # Sub-agents run with a fresh session per invocation (no history)
-        sub_session = Session(agent_id=agent_id, model=agent.model)
-        sub_session.add_user_message(prompt)
+    def kill_job(self, session_id: str) -> None:
+        task = self._tasks.get(session_id)
+        if task is not None:
+            task.cancel()
 
-        await send({
-            "type": "job_update",
-            "job_id": sub_job_id,
-            "agent_id": agent_id,
-            "title": prompt[:60],
-            "status": "running",
-            "progress": None,
-        })
+    def delete_session(self, session_id: str) -> None:
+        session = self._store.get(session_id)
+        if session and session.claude_session_id:
+            self._delete_claude_session(session)
+        self._store.delete(session_id)
 
-        result_text = ""
-        async for event in provider.stream_chat(
-            sub_session.messages, agent.system_prompt, agent.model, agent.max_tokens,
-        ):
-            if event["type"] == "token":
-                result_text += event["delta"]
-                await send({"type": "token", "job_id": sub_job_id, "delta": event["delta"]})
-            elif event["type"] == "usage":
-                sub_session.input_tokens += event["input_tokens"]
-                sub_session.output_tokens += event["output_tokens"]
-                await send({
-                    "type": "usage",
-                    "job_id": sub_job_id,
-                    "input_tokens": sub_session.input_tokens,
-                    "output_tokens": sub_session.output_tokens,
-                    "cost_usd": sub_session.cost_usd,
-                })
-
-        await send({
-            "type": "job_update",
-            "job_id": sub_job_id,
-            "agent_id": agent_id,
-            "status": "completed",
-            "progress": None,
-        })
-
-        return result_text
-
-    @staticmethod
-    def _make_call_agent_tool(orchestrates: list[str]) -> dict[str, Any]:
-        return {
-            "name": "call_agent",
-            "description": (
-                "Call a sub-agent to perform a specific task. "
-                "Returns the agent's full response as a string."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "The ID of the sub-agent to call.",
-                        "enum": orchestrates,
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "The task or question to send to the sub-agent.",
-                    },
-                },
-                "required": ["agent_id", "prompt"],
-            },
-        }
+    def _delete_claude_session(self, session: Session) -> None:
+        """Delete Claude Code's on-disk session file."""
+        if not session.claude_session_id:
+            return
+        cwd = os.path.expanduser(session.working_dir)
+        encoded = cwd.replace("/", "-").lstrip("-")
+        claude_dir = Path.home() / ".claude" / "projects" / encoded
+        session_file = claude_dir / f"{session.claude_session_id}.jsonl"
+        if session_file.exists():
+            session_file.unlink()

@@ -20,6 +20,8 @@ class AnthropicProvider(BaseProvider):
         system: str,
         model: str,
         max_tokens: int,
+        cwd: str | None = None,
+        claude_session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         async for event in self._stream_once(messages, system, model, [], max_tokens):
             if event["type"] in ("token", "usage"):

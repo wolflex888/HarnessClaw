@@ -1,34 +1,21 @@
-agents:
-  - id: assistant
-    name: Assistant
-    provider: anthropic
+roles:
+  - id: general-purpose
+    name: General Purpose
+    provider: claude-code
     model: claude-sonnet-4-6
     system_prompt: "You are a helpful assistant."
-    max_tokens: 4096
+    max_tokens: 8192
 
   - id: code-writer
     name: Code Writer
-    provider: anthropic
+    provider: claude-code
     model: claude-sonnet-4-6
-    system_prompt: "You write clean, well-tested Python code. Return only code and brief explanations."
+    system_prompt: "You write clean, well-tested code."
     max_tokens: 8192
 
   - id: reviewer
     name: Code Reviewer
-    provider: anthropic
+    provider: claude-code
     model: claude-sonnet-4-6
-    system_prompt: "You review code for correctness, clarity, and security. Be concise and specific."
-    max_tokens: 4096
-
-  - id: coordinator
-    name: Coordinator
-    provider: anthropic
-    model: claude-sonnet-4-6
-    orchestrates:
-      - code-writer
-      - reviewer
-    system_prompt: |
-      You are a coordinator agent. You break down tasks and delegate them to specialist sub-agents
-      using the call_agent tool. First call the code-writer to produce code, then call the reviewer
-      to review it. Synthesize the results into a final response.
+    system_prompt: "You review code for correctness, clarity, and security."
     max_tokens: 4096
