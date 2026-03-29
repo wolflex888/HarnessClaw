@@ -1,49 +1,40 @@
-# HarnessClaw AI Gateway UI
+# HarnessClaw
 
-A FastAPI backend + React frontend that lets you chat with configurable Anthropic AI agents, including orchestrator agents that delegate tasks to specialist sub-agents via tool calls.
+A locally-run multi-agent dashboard powered by Claude Code. Chat with AI agents in your browser, with file system access, tool execution, and live permission approval.
 
 ## Requirements
 
 - Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Node 18+
-- Anthropic API key (`sk-ant-...`)
+- [Claude Code CLI](https://claude.ai/code) installed and authenticated
 
-## Setup & Run
-
-### Install backend dependencies
+## Setup
 
 ```bash
-pip install -r requirements.txt
-```
+# Install Python dependencies
+uv sync
 
-### Install frontend dependencies
-
-```bash
+# Install frontend dependencies
 cd ui && npm install && cd ..
 ```
 
-### Start backend
+## Run
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... uvicorn harness_claw.server:app --reload --port 8000
+uv run harnessclaw run
 ```
 
-### Start frontend (dev)
+Opens:
+- Backend: http://localhost:8000
+- Frontend: http://localhost:5173
+
+## Test
 
 ```bash
-cd ui && npm run dev
-# Open http://localhost:5173
+uv run pytest tests/ -v
 ```
 
-### Or build frontend for production
+## Sessions
 
-```bash
-cd ui && npm run build
-# Then open http://localhost:8000
-```
-
-## Testing
-
-```bash
-pytest tests/ -v
-```
+Sessions are persisted in `sessions.json`. Each session runs in a working directory and uses Claude Code's built-in tools (Bash, Edit, Read, etc.). Permission requests appear inline in the Work tab — click Allow or Deny before execution continues.
