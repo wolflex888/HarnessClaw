@@ -8,12 +8,12 @@ class BaseProvider:
     """
     Base class for AI providers.
 
-    stream_chat yields dicts with type "token" (delta: str) or "usage"
-    (input_tokens: int, output_tokens: int).
+    stream_chat yields dicts with type "token" (delta: str), "usage"
+    (input_tokens: int, output_tokens: int), or "session_init"
+    (claude_session_id: str) for ClaudeCodeProvider.
 
-    stream_with_tools yields the same plus "tool_call"
-    (tool_id: str, name: str, input: dict). The tool_executor callback
-    receives (tool_name, tool_input) and returns the result string.
+    cwd: working directory for the subprocess (ClaudeCodeProvider only).
+    claude_session_id: existing Claude Code session ID to resume.
     """
 
     async def stream_chat(
@@ -22,9 +22,11 @@ class BaseProvider:
         system: str,
         model: str,
         max_tokens: int,
+        cwd: str | None = None,
+        claude_session_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         raise NotImplementedError
-        yield  # make this an async generator  # noqa: unreachable
+        yield  # noqa: unreachable
 
     async def stream_with_tools(
         self,
