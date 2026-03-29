@@ -40,75 +40,82 @@ class JobRunner:
         return session
 
     async def run_job(self, session_id: str, text: str, send: Send) -> str:
-        session = self.get_or_create_session(session_id)
-        role = self._registry.get(session.role_id)
-        if role is None:
-            raise KeyError(f"Role {session.role_id!r} not found")
-
-        job_id = f"job-{session_id[:8]}-{len(session.messages)}"
-        provider = PROVIDERS.get(role.provider, PROVIDERS["claude-code"])
-
-        # Set session name from first user message
-        if not session.name and text:
-            session.name = text[:40]
-            await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "running"})
-
-        session.add_user_message(text)
-        session.status = "running"
-        self._store.save(session)
-
-        await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "running", "progress": None, "title": text[:40]})
-
-        full_response = ""
+        # Register this task so kill_job() can cancel it
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._tasks[session_id] = current_task
         try:
-            async for event in provider.stream_chat(
-                messages=session.messages,
-                system=role.system_prompt,
-                model=role.model,
-                max_tokens=role.max_tokens,
-                cwd=session.working_dir,
-                claude_session_id=session.claude_session_id,
-            ):
-                if event["type"] == "token":
-                    full_response += event["delta"]
-                    await _call_send(send, {"type": "token", "job_id": job_id, "delta": event["delta"]})
-                elif event["type"] == "usage":
-                    session.input_tokens += event["input_tokens"]
-                    session.output_tokens += event["output_tokens"]
-                    await _call_send(send, {
-                        "type": "usage",
-                        "job_id": job_id,
-                        "input_tokens": session.input_tokens,
-                        "output_tokens": session.output_tokens,
-                        "cost_usd": session.cost_usd,
-                    })
-                elif event["type"] == "session_init":
-                    session.claude_session_id = event["claude_session_id"]
-                elif event["type"] == "permission_request":
-                    await _call_send(send, {
-                        "type": "permission_request",
-                        "session_id": session_id,
-                        "request_id": event["request_id"],
-                        "tool_name": event["tool_name"],
-                        "input": event["input"],
-                    })
-                elif event["type"] == "error":
-                    await _call_send(send, {"type": "error", "job_id": job_id, "message": event["message"]})
+            session = self.get_or_create_session(session_id)
+            role = self._registry.get(session.role_id)
+            if role is None:
+                raise KeyError(f"Role {session.role_id!r} not found")
 
-        except asyncio.CancelledError:
-            session.status = "killed"
+            job_id = f"job-{session_id[:8]}-{len(session.messages)}"
+            provider = PROVIDERS.get(role.provider, PROVIDERS["claude-code"])
+
+            # Set session name from first user message
+            if not session.name and text:
+                session.name = text[:40]
+                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "running"})
+
+            session.add_user_message(text)
+            session.status = "running"
             self._store.save(session)
-            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "failed", "progress": None, "title": text[:40]})
-            await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "killed"})
-            return ""
 
-        session.add_assistant_message(full_response)
-        session.status = "idle"
-        self._store.save(session)
+            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "running", "progress": None, "title": text[:40]})
 
-        await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "completed", "progress": 100, "title": text[:40]})
-        await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "idle"})
-        return full_response
+            full_response = ""
+            try:
+                async for event in provider.stream_chat(
+                    messages=session.messages,
+                    system=role.system_prompt,
+                    model=role.model,
+                    max_tokens=role.max_tokens,
+                    cwd=session.working_dir,
+                    claude_session_id=session.claude_session_id,
+                ):
+                    if event["type"] == "token":
+                        full_response += event["delta"]
+                        await _call_send(send, {"type": "token", "job_id": job_id, "delta": event["delta"]})
+                    elif event["type"] == "usage":
+                        session.input_tokens += event["input_tokens"]
+                        session.output_tokens += event["output_tokens"]
+                        await _call_send(send, {
+                            "type": "usage",
+                            "job_id": job_id,
+                            "input_tokens": session.input_tokens,
+                            "output_tokens": session.output_tokens,
+                            "cost_usd": session.cost_usd,
+                        })
+                    elif event["type"] == "session_init":
+                        session.claude_session_id = event["claude_session_id"]
+                    elif event["type"] == "permission_request":
+                        await _call_send(send, {
+                            "type": "permission_request",
+                            "session_id": session_id,
+                            "request_id": event["request_id"],
+                            "tool_name": event["tool_name"],
+                            "input": event["input"],
+                        })
+                    elif event["type"] == "error":
+                        await _call_send(send, {"type": "error", "job_id": job_id, "message": event["message"]})
+
+            except asyncio.CancelledError:
+                session.status = "killed"
+                self._store.save(session)
+                await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "failed", "progress": None, "title": text[:40]})
+                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "killed"})
+                return ""
+
+            session.add_assistant_message(full_response)
+            session.status = "idle"
+            self._store.save(session)
+
+            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "completed", "progress": 100, "title": text[:40]})
+            await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "idle"})
+            return full_response
+        finally:
+            self._tasks.pop(session_id, None)
 
     def resolve_permission(self, request_id: str, *, approved: bool) -> None:
         provider = PROVIDERS.get("claude-code")
@@ -116,9 +123,9 @@ class JobRunner:
             provider.resolve_permission(request_id, approved=approved)
 
     def kill_job(self, session_id: str) -> None:
-        for job_id, task in list(self._tasks.items()):
-            if session_id in job_id:
-                task.cancel()
+        task = self._tasks.get(session_id)
+        if task is not None:
+            task.cancel()
 
     def delete_session(self, session_id: str) -> None:
         session = self._store.get(session_id)
