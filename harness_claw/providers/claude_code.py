@@ -33,9 +33,8 @@ class ClaudeCodeProvider(BaseProvider):
         cmd = [
             "claude",
             "-p",
+            "--verbose",
             "--output-format", "stream-json",
-            "--input-format", "stream-json",
-            "--include-partial-messages",
             "--system-prompt", system,
             "--model", model,
         ]
@@ -51,6 +50,11 @@ class ClaudeCodeProvider(BaseProvider):
             cwd=os.path.expanduser(cwd) if cwd else None,
             env=env,
         )
+
+        # Close stdin immediately so the process doesn't hang waiting for EOF.
+        # Permission responses are written before closing in _handle_event.
+        assert proc.stdin is not None
+        proc.stdin.close()
 
         try:
             async for line in self._read_lines(proc):
@@ -94,36 +98,13 @@ class ClaudeCodeProvider(BaseProvider):
                 if block.get("type") == "text":
                     yield {"type": "token", "delta": block["text"]}
 
-        elif event_type == "tool_input":
-            request_id = event.get("request_id", "")
-            tool_name = event.get("tool", {}).get("name", "")
-            tool_input = event.get("input", {})
-
-            done_event = asyncio.Event()
-            self._pending[request_id] = (done_event, None)
-
-            yield {
-                "type": "permission_request",
-                "request_id": request_id,
-                "tool_name": tool_name,
-                "input": tool_input,
-            }
-
-            await done_event.wait()
-            _, approved = self._pending.pop(request_id)
-
-            response = json.dumps({"approved": bool(approved)}) + "\n"
-            assert proc.stdin is not None
-            proc.stdin.write(response.encode())
-            await proc.stdin.drain()
-
         elif event_type == "result":
             usage = event.get("usage", {})
             yield {
                 "type": "usage",
                 "input_tokens": usage.get("input_tokens", 0),
                 "output_tokens": usage.get("output_tokens", 0),
-                "cost_usd": event.get("cost_usd", 0.0),
+                "cost_usd": event.get("total_cost_usd", 0.0),
             }
             if event.get("subtype") == "error":
                 yield {"type": "error", "message": event.get("error", "Unknown error")}
