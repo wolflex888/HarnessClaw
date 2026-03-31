@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import pytest
 
-from harness_claw.cost_poller import CostPoller
+from harness_claw.runtime.cost_poller import CostPoller
 
 
 async def test_poll_reads_jsonl_and_calls_callback(tmp_path):

@@ -1,6 +1,6 @@
 from pathlib import Path
 from harness_claw.session import Session
-from harness_claw.session_store import SessionStore
+from harness_claw.runtime.session_store import SessionStore
 
 
 def make_session(role_id: str = "general-purpose") -> Session:

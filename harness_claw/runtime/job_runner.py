@@ -7,11 +7,11 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from harness_claw.cost_poller import CostPoller, _encode_cwd
-from harness_claw.pty_session import PtySession
+from harness_claw.runtime.cost_poller import CostPoller, _encode_cwd
+from harness_claw.runtime.pty_session import PtySession
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
-from harness_claw.session_store import SessionStore
+from harness_claw.runtime.session_store import SessionStore
 
 _logger = logging.getLogger(__name__)
 

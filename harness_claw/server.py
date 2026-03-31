@@ -12,8 +12,8 @@ from pydantic import BaseModel
 
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
-from harness_claw.session_store import SessionStore
-from harness_claw.job_runner import JobRunner
+from harness_claw.runtime.session_store import SessionStore
+from harness_claw.runtime.job_runner import JobRunner
 
 _root = Path(__file__).parent.parent
 _agents_yaml = _root / "agents.yaml"

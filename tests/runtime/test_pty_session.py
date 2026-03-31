@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 import pytest
 
-from harness_claw.pty_session import PtySession
+from harness_claw.runtime.pty_session import PtySession
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def mock_proc():
 # Default: no data ready (timeout) — read loop relies on isalive() + task cancellation.
 @pytest.fixture(autouse=True)
 def mock_select(mock_proc):
-    with patch("harness_claw.pty_session.select") as m:
+    with patch("harness_claw.runtime.pty_session.select") as m:
         m.select.return_value = ([], [], [])
         yield m
 

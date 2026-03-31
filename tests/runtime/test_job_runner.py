@@ -4,10 +4,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from harness_claw.job_runner import JobRunner
+from harness_claw.runtime.job_runner import JobRunner
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
-from harness_claw.session_store import SessionStore
+from harness_claw.runtime.session_store import SessionStore
 
 
 def make_session(**kwargs) -> Session:
@@ -35,12 +35,12 @@ async def test_start_session_spawns_pty():
     session = make_session(session_id="s1")
     store.get.return_value = session
 
-    with patch("harness_claw.job_runner.PtySession") as MockPty:
+    with patch("harness_claw.runtime.job_runner.PtySession") as MockPty:
         mock_pty = MagicMock()
         mock_pty.start = AsyncMock()
         MockPty.return_value = mock_pty
 
-        with patch("harness_claw.job_runner.CostPoller"):
+        with patch("harness_claw.runtime.job_runner.CostPoller"):
             await runner.start_session(session)
 
         MockPty.assert_called_once_with("s1")
@@ -51,12 +51,12 @@ async def test_write_forwards_to_pty():
     runner, _, store = make_runner()
     session = make_session(session_id="s1")
 
-    with patch("harness_claw.job_runner.PtySession") as MockPty:
+    with patch("harness_claw.runtime.job_runner.PtySession") as MockPty:
         mock_pty = MagicMock()
         mock_pty.start = AsyncMock()
         MockPty.return_value = mock_pty
 
-        with patch("harness_claw.job_runner.CostPoller"):
+        with patch("harness_claw.runtime.job_runner.CostPoller"):
             await runner.start_session(session)
 
         runner.write("s1", b"hello")
@@ -67,12 +67,12 @@ async def test_resize_forwards_to_pty():
     runner, _, store = make_runner()
     session = make_session(session_id="s1")
 
-    with patch("harness_claw.job_runner.PtySession") as MockPty:
+    with patch("harness_claw.runtime.job_runner.PtySession") as MockPty:
         mock_pty = MagicMock()
         mock_pty.start = AsyncMock()
         MockPty.return_value = mock_pty
 
-        with patch("harness_claw.job_runner.CostPoller"):
+        with patch("harness_claw.runtime.job_runner.CostPoller"):
             await runner.start_session(session)
 
         runner.resize("s1", cols=120, rows=40)
@@ -83,12 +83,12 @@ async def test_kill_session_kills_pty():
     runner, _, store = make_runner()
     session = make_session(session_id="s1")
 
-    with patch("harness_claw.job_runner.PtySession") as MockPty:
+    with patch("harness_claw.runtime.job_runner.PtySession") as MockPty:
         mock_pty = MagicMock()
         mock_pty.start = AsyncMock()
         MockPty.return_value = mock_pty
 
-        with patch("harness_claw.job_runner.CostPoller"):
+        with patch("harness_claw.runtime.job_runner.CostPoller"):
             await runner.start_session(session)
 
         runner.kill_session("s1")
