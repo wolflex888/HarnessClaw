@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import inspect
+import json
 import logging
 import os
 from pathlib import Path
@@ -25,11 +26,24 @@ async def _call_send(send: Send, msg: dict[str, Any]) -> None:
 
 
 class JobRunner:
-    def __init__(self, registry: RoleRegistry, store: SessionStore) -> None:
+    def __init__(
+        self,
+        registry: RoleRegistry,
+        store: SessionStore,
+        token_store: Any | None = None,
+        connector: Any | None = None,
+        dispatcher: Any | None = None,
+        mcp_base_url: str = "http://localhost:8000",
+    ) -> None:
         self._registry = registry
         self._store = store
+        self._token_store = token_store
+        self._connector = connector
+        self._dispatcher = dispatcher
+        self._mcp_base_url = mcp_base_url
         self._pty_sessions: dict[str, PtySession] = {}
         self._cost_pollers: dict[str, CostPoller] = {}
+        self._session_tokens: dict[str, str] = {}  # session_id → token
         self._senders: set[Send] = set()
 
     def add_sender(self, send: Send) -> None:
@@ -42,6 +56,29 @@ class JobRunner:
         for send in list(self._senders):
             await _call_send(send, msg)
 
+    def _write_mcp_config(self, cwd: str, token: str) -> None:
+        """Write .claude/settings.json so claude picks up our MCP server."""
+        cwd_expanded = os.path.expanduser(cwd)
+        claude_dir = Path(cwd_expanded) / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = claude_dir / "settings.json"
+
+        # Preserve existing settings if any
+        existing: dict[str, Any] = {}
+        if settings_path.exists():
+            try:
+                existing = json.loads(settings_path.read_text())
+            except Exception:
+                pass
+
+        mcp_servers = existing.get("mcpServers", {})
+        mcp_servers["harnessclaw"] = {
+            "type": "sse",
+            "url": f"{self._mcp_base_url}/mcp/sse?token={token}",
+        }
+        existing["mcpServers"] = mcp_servers
+        settings_path.write_text(json.dumps(existing, indent=2))
+
     async def start_session(self, session: Session) -> None:
         session_id = session.session_id
 
@@ -51,10 +88,18 @@ class JobRunner:
 
         role = self._registry.get(session.role_id)
         if role is None:
-            _logger.error("start_session: role %r not found for session %s", session.role_id, session.session_id)
+            _logger.error("start_session: role %r not found for session %s", session.role_id, session_id)
             return
 
         _logger.info("Starting PTY session %s (role=%s)", session_id, session.role_id)
+
+        # Issue token and write MCP config
+        extra_env: dict[str, str] = {}
+        if self._token_store is not None:
+            token = self._token_store.issue(session_id, role.scopes)
+            self._session_tokens[session_id] = token
+            extra_env["HARNESS_TOKEN"] = token
+            self._write_mcp_config(session.working_dir, token)
 
         pty = PtySession(session_id)
 
@@ -66,12 +111,32 @@ class JobRunner:
             })
 
         pty.add_output_callback(on_output)
-        await pty.start(role.system_prompt, role.model, session.working_dir)
+        await pty.start(role.system_prompt, role.model, session.working_dir,
+                        extra_env=extra_env if extra_env else None)
         self._pty_sessions[session_id] = pty
+
+        # Register in capability registry
+        if self._connector is not None:
+            from harness_claw.gateway.capability import AgentAdvertisement
+            await self._connector.register(AgentAdvertisement(
+                session_id=session_id,
+                role_id=session.role_id,
+                caps=role.caps,
+                status="idle",
+                task_count=0,
+                connector="local",
+            ))
+
+        # Register write callback with dispatcher
+        if self._dispatcher is not None:
+            self._dispatcher.register_writer(session_id, pty.write)
 
         session.status = "running"
         self._store.save(session)
-        await self._broadcast({"type": "session_update", "session_id": session_id, "status": "running", "name": session.name})
+        await self._broadcast({
+            "type": "session_update", "session_id": session_id,
+            "status": "running", "name": session.name,
+        })
 
         async def on_cost_update(sid: str, cost: float, input_tokens: int, output_tokens: int) -> None:
             s = self._store.get(sid)
@@ -109,6 +174,18 @@ class JobRunner:
         poller = self._cost_pollers.pop(session_id, None)
         if poller:
             poller.stop()
+        # Revoke token
+        if self._token_store is not None:
+            token = self._session_tokens.pop(session_id, None)
+            if token:
+                self._token_store.revoke(token)
+        # Deregister from capability registry
+        if self._connector is not None:
+            import asyncio
+            asyncio.create_task(self._connector.deregister(session_id))
+        # Unregister writer from dispatcher
+        if self._dispatcher is not None:
+            self._dispatcher.unregister_writer(session_id)
         session = self._store.get(session_id)
         if session:
             session.status = "killed"
@@ -116,7 +193,6 @@ class JobRunner:
 
     def delete_session(self, session_id: str) -> None:
         _logger.info("Deleting session %s", session_id)
-        # kill_session already pops from _pty_sessions and _cost_pollers
         self.kill_session(session_id)
         session = self._store.get(session_id)
         if session:

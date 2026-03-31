@@ -87,3 +87,12 @@ async def test_kill_terminates_proc(mock_proc):
         await pty.start("sys", "model", "/tmp")
         pty.kill()
         mock_proc.terminate.assert_called()
+
+
+async def test_start_passes_extra_env(mock_proc):
+    with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc) as mock_spawn:
+        pty = PtySession("sess-env")
+        await pty.start("sys", "model", "/tmp", extra_env={"HARNESS_TOKEN": "tok123"})
+        call_kwargs = mock_spawn.call_args[1]
+        assert call_kwargs.get("env", {}).get("HARNESS_TOKEN") == "tok123"
+        pty.kill()

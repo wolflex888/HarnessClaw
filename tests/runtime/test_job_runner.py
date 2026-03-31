@@ -21,6 +21,8 @@ def make_runner(sessions=None):
     role = MagicMock()
     role.system_prompt = "You are helpful."
     role.model = "claude-sonnet-4-6"
+    role.scopes = ["agent:list"]
+    role.caps = []
     registry.get.return_value = role
 
     store = MagicMock(spec=SessionStore)
@@ -44,7 +46,7 @@ async def test_start_session_spawns_pty():
             await runner.start_session(session)
 
         MockPty.assert_called_once_with("s1")
-        mock_pty.start.assert_called_once_with("You are helpful.", "claude-sonnet-4-6", "/tmp")
+        mock_pty.start.assert_called_once_with("You are helpful.", "claude-sonnet-4-6", "/tmp", extra_env=None)
 
 
 async def test_write_forwards_to_pty():
