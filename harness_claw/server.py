@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,14 @@ store = SessionStore(_sessions_json)
 runner = JobRunner(registry, store)
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    """Start PTY processes for all non-killed sessions on server boot."""
+    for session in store.all():
+        if session.status != "killed":
+            await runner.start_session(session)
 
 
 # --- REST ---
@@ -51,7 +60,7 @@ def list_sessions() -> dict[str, list[dict[str, Any]]]:
 
 
 @app.post("/api/sessions", status_code=201)
-def create_session(req: CreateSessionRequest) -> dict[str, Any]:
+async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
     role = registry.get(req.role_id)
     if role is None:
         raise HTTPException(status_code=404, detail=f"Role {req.role_id!r} not found")
@@ -61,6 +70,7 @@ def create_session(req: CreateSessionRequest) -> dict[str, Any]:
         model=role.model,
     )
     store.save(session)
+    await runner.start_session(session)
     return session.to_dict()
 
 
@@ -81,6 +91,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     async def send(msg: dict[str, Any]) -> None:
         await queue.put(msg)
 
+    runner.add_sender(send)
+
     async def sender() -> None:
         while True:
             msg = await queue.get()
@@ -92,29 +104,20 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             data = await ws.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "chat":
-                session_id = data["session_id"]
-                text = data["text"]
-                asyncio.create_task(runner.run_job(session_id, text, send))
+            if msg_type == "input":
+                raw = base64.b64decode(data["data"])
+                runner.write(data["session_id"], raw)
+
+            elif msg_type == "resize":
+                runner.resize(data["session_id"], cols=data["cols"], rows=data["rows"])
 
             elif msg_type == "cancel":
-                session_id = data.get("session_id", "")
-                runner.kill_job(session_id)
-
-            elif msg_type == "resume":
-                session_id = data["session_id"]
-                session = store.get(session_id)
-                if session:
-                    session.status = "idle"
-                    store.save(session)
-                    await send({"type": "session_update", "session_id": session_id, "name": session.name, "status": "idle"})
-
-            elif msg_type == "permission_response":
-                runner.resolve_permission(data["request_id"], approved=data["approved"])
+                runner.kill_session(data["session_id"])
 
     except WebSocketDisconnect:
         pass
     finally:
+        runner.remove_sender(send)
         sender_task.cancel()
 
 
