@@ -1,6 +1,7 @@
 from __future__ import annotations
+import asyncio
 import pytest
-from harness_claw.gateway.capability import LocalConnector, AgentAdvertisement
+from harness_claw.gateway.capability import LocalConnector, AgentAdvertisement, GatewayConnector
 
 
 def make_agent(session_id: str, caps: list[str], task_count: int = 0) -> AgentAdvertisement:
@@ -53,3 +54,31 @@ async def test_query_empty_caps_returns_all():
     await conn.register(make_agent("s2", ["typescript"]))
     results = await conn.query([])
     assert len(results) == 2
+
+
+async def test_gateway_connector_register_and_query():
+    conn = GatewayConnector(bootstrap_token="secret", heartbeat_ttl=2)
+    session_id = await conn.register_external(
+        bootstrap_token="secret",
+        caps=["python"],
+        role_id="external-coder",
+    )
+    assert session_id is not None
+    results = await conn.query(["python"])
+    assert any(a.session_id == session_id for a in results)
+
+
+async def test_gateway_connector_wrong_token_rejected():
+    conn = GatewayConnector(bootstrap_token="secret", heartbeat_ttl=2)
+    with pytest.raises(ValueError, match="bootstrap"):
+        await conn.register_external(bootstrap_token="wrong", caps=[], role_id="r")
+
+
+async def test_gateway_connector_heartbeat_deregisters_on_timeout():
+    conn = GatewayConnector(bootstrap_token="secret", heartbeat_ttl=1)
+    session_id = await conn.register_external("secret", ["python"], "coder")
+    # No heartbeat — wait for TTL
+    await asyncio.sleep(1.5)
+    conn._expire_stale()
+    results = await conn.query(["python"])
+    assert not any(a.session_id == session_id for a in results)
