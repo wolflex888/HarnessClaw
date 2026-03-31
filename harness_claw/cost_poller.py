@@ -12,6 +12,7 @@ CostCallback = Callable[[str, float, int, int], Awaitable[None]]
 
 
 def _encode_cwd(cwd: str) -> str:
+    # Matches Claude Code's own encoding for ~/.claude/projects/<dir>
     expanded = os.path.expanduser(cwd)
     return expanded.replace("/", "-").lstrip("-")
 
@@ -82,7 +83,7 @@ class CostPoller:
                 total_input += usage.get("input_tokens", 0)
                 total_output += usage.get("output_tokens", 0)
 
-        if total_cost != self._last_cost:
+        if abs(total_cost - self._last_cost) > 1e-9:
             self._last_cost = total_cost
             await self._on_cost_update(
                 self.session_id, total_cost, total_input, total_output
