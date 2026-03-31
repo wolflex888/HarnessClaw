@@ -53,17 +53,19 @@ async def test_resize_calls_setwinsize(mock_proc):
 
 async def test_output_callback_receives_data(mock_proc):
     received = []
+    done = asyncio.Event()
 
     async def cb(data: bytes) -> None:
         received.append(data)
+        if b"chunk2" in data:
+            done.set()
 
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc):
         mock_proc.read.side_effect = [b"chunk1", b"chunk2", EOFError()]
         pty = PtySession("sess-1")
         pty.add_output_callback(cb)
         await pty.start("sys", "model", "/tmp")
-        # Give read_loop time to run
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(done.wait(), timeout=2.0)
         assert b"chunk1" in received
         assert b"chunk2" in received
         pty.kill()
