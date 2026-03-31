@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import os
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from harness_claw.providers.base import BaseProvider
-from harness_claw.providers.claude_code import ClaudeCodeProvider
-from harness_claw.providers.anthropic import AnthropicProvider
+from harness_claw.cost_poller import CostPoller, _encode_cwd
+from harness_claw.pty_session import PtySession
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
 from harness_claw.session_store import SessionStore
-
-PROVIDERS: dict[str, BaseProvider] = {
-    "anthropic": AnthropicProvider(),
-    "claude-code": ClaudeCodeProvider(),
-}
 
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -31,115 +26,89 @@ class JobRunner:
     def __init__(self, registry: RoleRegistry, store: SessionStore) -> None:
         self._registry = registry
         self._store = store
-        self._tasks: dict[str, asyncio.Task[None]] = {}  # job_id → task
+        self._pty_sessions: dict[str, PtySession] = {}
+        self._cost_pollers: dict[str, CostPoller] = {}
+        self._senders: set[Send] = set()
 
-    def get_or_create_session(self, session_id: str) -> Session:
-        session = self._store.get(session_id)
-        if session is None:
-            raise KeyError(f"Session {session_id!r} not found")
-        return session
+    def add_sender(self, send: Send) -> None:
+        self._senders.add(send)
 
-    async def run_job(self, session_id: str, text: str, send: Send) -> str:
-        # Register this task so kill_job() can cancel it
-        current_task = asyncio.current_task()
-        if current_task is not None:
-            self._tasks[session_id] = current_task
-        try:
-            session = self.get_or_create_session(session_id)
-            role = self._registry.get(session.role_id)
-            if role is None:
-                raise KeyError(f"Role {session.role_id!r} not found")
+    def remove_sender(self, send: Send) -> None:
+        self._senders.discard(send)
 
-            job_id = f"job-{session_id[:8]}-{len(session.messages)}"
-            provider = PROVIDERS.get(role.provider, PROVIDERS["claude-code"])
+    async def _broadcast(self, msg: dict[str, Any]) -> None:
+        for send in list(self._senders):
+            await _call_send(send, msg)
 
-            # Set session name from first user message
-            if not session.name and text:
-                session.name = text[:40]
-                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "running"})
+    async def start_session(self, session: Session) -> None:
+        role = self._registry.get(session.role_id)
+        if role is None:
+            return
 
-            session.add_user_message(text)
-            session.status = "running"
-            self._store.save(session)
+        session_id = session.session_id
 
-            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "running", "progress": None, "title": text[:40]})
+        pty = PtySession(session_id)
 
-            full_response = ""
-            try:
-                async for event in provider.stream_chat(
-                    messages=session.messages,
-                    system=role.system_prompt,
-                    model=role.model,
-                    max_tokens=role.max_tokens,
-                    cwd=session.working_dir,
-                    claude_session_id=session.claude_session_id,
-                ):
-                    if event["type"] == "token":
-                        full_response += event["delta"]
-                        await _call_send(send, {"type": "token", "job_id": job_id, "delta": event["delta"]})
-                    elif event["type"] == "usage":
-                        session.input_tokens += event["input_tokens"]
-                        session.output_tokens += event["output_tokens"]
-                        await _call_send(send, {
-                            "type": "usage",
-                            "job_id": job_id,
-                            "input_tokens": session.input_tokens,
-                            "output_tokens": session.output_tokens,
-                            "cost_usd": session.cost_usd,
-                        })
-                    elif event["type"] == "session_init":
-                        session.claude_session_id = event["claude_session_id"]
-                    elif event["type"] == "permission_request":
-                        await _call_send(send, {
-                            "type": "permission_request",
-                            "session_id": session_id,
-                            "request_id": event["request_id"],
-                            "tool_name": event["tool_name"],
-                            "input": event["input"],
-                        })
-                    elif event["type"] == "error":
-                        await _call_send(send, {"type": "error", "job_id": job_id, "message": event["message"]})
+        async def on_output(data: bytes) -> None:
+            await self._broadcast({
+                "type": "output",
+                "session_id": session_id,
+                "data": base64.b64encode(data).decode(),
+            })
 
-            except asyncio.CancelledError:
-                session.status = "killed"
-                self._store.save(session)
-                await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "failed", "progress": None, "title": text[:40]})
-                await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "killed"})
-                return ""
+        pty.add_output_callback(on_output)
+        await pty.start(role.system_prompt, role.model, session.working_dir)
+        self._pty_sessions[session_id] = pty
 
-            session.add_assistant_message(full_response)
-            session.status = "idle"
-            self._store.save(session)
+        async def on_cost_update(sid: str, cost: float, input_tokens: int, output_tokens: int) -> None:
+            s = self._store.get(sid)
+            if s:
+                s.input_tokens = input_tokens
+                s.output_tokens = output_tokens
+                self._store.save(s)
+            await self._broadcast({
+                "type": "cost_update",
+                "session_id": sid,
+                "cost_usd": cost,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            })
 
-            await _call_send(send, {"type": "job_update", "job_id": job_id, "session_id": session_id, "status": "completed", "progress": 100, "title": text[:40]})
-            await _call_send(send, {"type": "session_update", "session_id": session_id, "name": session.name, "status": "idle"})
-            return full_response
-        finally:
-            self._tasks.pop(session_id, None)
+        poller = CostPoller(session_id, session.working_dir, on_cost_update)
+        poller.start()
+        self._cost_pollers[session_id] = poller
 
-    def resolve_permission(self, request_id: str, *, approved: bool) -> None:
-        provider = PROVIDERS.get("claude-code")
-        if isinstance(provider, ClaudeCodeProvider):
-            provider.resolve_permission(request_id, approved=approved)
+    def write(self, session_id: str, data: bytes) -> None:
+        pty = self._pty_sessions.get(session_id)
+        if pty:
+            pty.write(data)
 
-    def kill_job(self, session_id: str) -> None:
-        task = self._tasks.get(session_id)
-        if task is not None:
-            task.cancel()
+    def resize(self, session_id: str, cols: int, rows: int) -> None:
+        pty = self._pty_sessions.get(session_id)
+        if pty:
+            pty.resize(cols=cols, rows=rows)
+
+    def kill_session(self, session_id: str) -> None:
+        pty = self._pty_sessions.get(session_id)
+        if pty:
+            pty.kill()
+        poller = self._cost_pollers.get(session_id)
+        if poller:
+            poller.stop()
 
     def delete_session(self, session_id: str) -> None:
+        self.kill_session(session_id)
+        self._pty_sessions.pop(session_id, None)
+        self._cost_pollers.pop(session_id, None)
         session = self._store.get(session_id)
-        if session and session.claude_session_id:
+        if session:
             self._delete_claude_session(session)
         self._store.delete(session_id)
 
     def _delete_claude_session(self, session: Session) -> None:
-        """Delete Claude Code's on-disk session file."""
-        if not session.claude_session_id:
-            return
         cwd = os.path.expanduser(session.working_dir)
-        encoded = cwd.replace("/", "-").lstrip("-")
+        encoded = _encode_cwd(cwd)
         claude_dir = Path.home() / ".claude" / "projects" / encoded
-        session_file = claude_dir / f"{session.claude_session_id}.jsonl"
-        if session_file.exists():
-            session_file.unlink()
+        if claude_dir.exists():
+            for f in claude_dir.glob("*.jsonl"):
+                f.unlink(missing_ok=True)

@@ -1,111 +1,113 @@
-import asyncio
-from collections.abc import AsyncIterator
-from typing import Any
-from pathlib import Path
+from __future__ import annotations
 
-from harness_claw.job_runner import JobRunner, PROVIDERS
-from harness_claw.providers.base import BaseProvider
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+import pytest
+
+from harness_claw.job_runner import JobRunner
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
 from harness_claw.session_store import SessionStore
 
 
-class MockProvider(BaseProvider):
-    def __init__(self, events: list[dict[str, Any]]) -> None:
-        self._events = events
-
-    async def stream_chat(self, messages, system, model, max_tokens, cwd=None, claude_session_id=None) -> AsyncIterator[dict[str, Any]]:
-        for event in self._events:
-            yield event
+def make_session(**kwargs) -> Session:
+    defaults = dict(role_id="assistant", working_dir="/tmp", model="claude-sonnet-4-6")
+    defaults.update(kwargs)
+    return Session(**defaults)
 
 
-def make_registry(tmp_path: Path) -> RoleRegistry:
-    yaml_file = tmp_path / "agents.yaml"
-    yaml_file.write_text("""
-roles:
-  - id: general-purpose
-    name: General Purpose
-    provider: mock
-    model: claude-sonnet-4-6
-    system_prompt: "You are helpful."
-    max_tokens: 1024
-""")
-    return RoleRegistry(yaml_file)
+def make_runner(sessions=None):
+    registry = MagicMock(spec=RoleRegistry)
+    role = MagicMock()
+    role.system_prompt = "You are helpful."
+    role.model = "claude-sonnet-4-6"
+    registry.get.return_value = role
+
+    store = MagicMock(spec=SessionStore)
+    store.get.return_value = sessions[0] if sessions else make_session()
+    store.all.return_value = sessions or []
+
+    return JobRunner(registry, store), registry, store
 
 
-def make_runner(tmp_path: Path, events: list[dict[str, Any]]) -> tuple[JobRunner, SessionStore]:
-    registry = make_registry(tmp_path)
-    store = SessionStore(tmp_path / "sessions.json")
-    PROVIDERS["mock"] = MockProvider(events)
-    runner = JobRunner(registry, store)
-    return runner, store
+async def test_start_session_spawns_pty():
+    runner, _, store = make_runner()
+    session = make_session(session_id="s1")
+    store.get.return_value = session
+
+    with patch("harness_claw.job_runner.PtySession") as MockPty:
+        mock_pty = MagicMock()
+        mock_pty.start = AsyncMock()
+        MockPty.return_value = mock_pty
+
+        with patch("harness_claw.job_runner.CostPoller"):
+            await runner.start_session(session)
+
+        MockPty.assert_called_once_with("s1")
+        mock_pty.start.assert_called_once_with("You are helpful.", "claude-sonnet-4-6", "/tmp")
 
 
-async def test_run_job_streams_tokens(tmp_path: Path) -> None:
-    events = [
-        {"type": "token", "delta": "Hello"},
-        {"type": "token", "delta": " world"},
-        {"type": "usage", "input_tokens": 5, "output_tokens": 10},
-    ]
-    runner, store = make_runner(tmp_path, events)
-    session = Session(role_id="general-purpose", working_dir="~/src", model="claude-sonnet-4-6")
-    store.save(session)
+async def test_write_forwards_to_pty():
+    runner, _, store = make_runner()
+    session = make_session(session_id="s1")
 
-    sent = []
-    await runner.run_job(session.session_id, "Hi", sent.append)
+    with patch("harness_claw.job_runner.PtySession") as MockPty:
+        mock_pty = MagicMock()
+        mock_pty.start = AsyncMock()
+        MockPty.return_value = mock_pty
 
-    token_events = [e for e in sent if e["type"] == "token"]
-    assert len(token_events) == 2
-    assert token_events[0]["delta"] == "Hello"
-    assert token_events[1]["delta"] == " world"
+        with patch("harness_claw.job_runner.CostPoller"):
+            await runner.start_session(session)
+
+        runner.write("s1", b"hello")
+        mock_pty.write.assert_called_once_with(b"hello")
 
 
-async def test_run_job_sets_session_name(tmp_path: Path) -> None:
-    runner, store = make_runner(tmp_path, [{"type": "token", "delta": "ok"}])
-    session = Session(role_id="general-purpose", working_dir="~/src", model="claude-sonnet-4-6")
-    store.save(session)
+async def test_resize_forwards_to_pty():
+    runner, _, store = make_runner()
+    session = make_session(session_id="s1")
 
-    sent = []
-    await runner.run_job(session.session_id, "Write a sorting algorithm", sent.append)
+    with patch("harness_claw.job_runner.PtySession") as MockPty:
+        mock_pty = MagicMock()
+        mock_pty.start = AsyncMock()
+        MockPty.return_value = mock_pty
 
-    updated = store.get(session.session_id)
-    assert updated.name == "Write a sorting algorithm"
+        with patch("harness_claw.job_runner.CostPoller"):
+            await runner.start_session(session)
 
-
-async def test_run_job_status_lifecycle(tmp_path: Path) -> None:
-    runner, store = make_runner(tmp_path, [{"type": "token", "delta": "done"}])
-    session = Session(role_id="general-purpose", working_dir="~/src", model="claude-sonnet-4-6")
-    store.save(session)
-
-    sent = []
-    await runner.run_job(session.session_id, "hello", sent.append)
-
-    job_updates = [e for e in sent if e["type"] == "job_update"]
-    statuses = [e["status"] for e in job_updates]
-    assert "running" in statuses
-    assert "completed" in statuses
+        runner.resize("s1", cols=120, rows=40)
+        mock_pty.resize.assert_called_once_with(cols=120, rows=40)
 
 
-async def test_run_job_accumulates_usage(tmp_path: Path) -> None:
-    events = [
-        {"type": "usage", "input_tokens": 10, "output_tokens": 20},
-    ]
-    runner, store = make_runner(tmp_path, events)
-    session = Session(role_id="general-purpose", working_dir="~/src", model="claude-sonnet-4-6")
-    store.save(session)
+async def test_kill_session_kills_pty():
+    runner, _, store = make_runner()
+    session = make_session(session_id="s1")
 
-    sent = []
-    await runner.run_job(session.session_id, "Hi", sent.append)
+    with patch("harness_claw.job_runner.PtySession") as MockPty:
+        mock_pty = MagicMock()
+        mock_pty.start = AsyncMock()
+        MockPty.return_value = mock_pty
 
-    updated = store.get(session.session_id)
-    assert updated.input_tokens == 10
-    assert updated.output_tokens == 20
+        with patch("harness_claw.job_runner.CostPoller"):
+            await runner.start_session(session)
+
+        runner.kill_session("s1")
+        mock_pty.kill.assert_called_once()
 
 
-async def test_delete_session(tmp_path: Path) -> None:
-    runner, store = make_runner(tmp_path, [])
-    session = Session(role_id="general-purpose", working_dir="~/src", model="claude-sonnet-4-6")
-    store.save(session)
+async def test_broadcast_output_to_all_senders():
+    runner, _, _ = make_runner()
+    received_a = []
+    received_b = []
 
-    runner.delete_session(session.session_id)
-    assert store.get(session.session_id) is None
+    async def send_a(msg): received_a.append(msg)
+    async def send_b(msg): received_b.append(msg)
+
+    runner.add_sender(send_a)
+    runner.add_sender(send_b)
+
+    await runner._broadcast({"type": "output", "session_id": "s1", "data": "abc"})
+
+    assert len(received_a) == 1
+    assert len(received_b) == 1
+    assert received_a[0]["data"] == "abc"
