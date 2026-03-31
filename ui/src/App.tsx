@@ -154,30 +154,32 @@ export default function App() {
             <TabPanel activeTab={activeTab} onTabChange={setActiveTab}>
               {(tab): ReactNode => (
                 <>
-                  {/* TerminalTab is always mounted inside the content area to preserve
-                      xterm state across tab switches. Hidden via CSS when not active. */}
-                  <TerminalTab
-                    key={activeSession.session_id}
-                    sessionId={activeSession.session_id}
-                    hidden={tab !== 'work'}
-                    onRegister={(writeFn) => {
-                      terminalWriters.current[activeSession.session_id] = writeFn
-                    }}
-                    onUnregister={() => {
-                      delete terminalWriters.current[activeSession.session_id]
-                    }}
-                    onInput={(data) => wsRef.current?.send({
-                      type: 'input',
-                      session_id: activeSession.session_id,
-                      data,
-                    })}
-                    onResize={(cols, rows) => wsRef.current?.send({
-                      type: 'resize',
-                      session_id: activeSession.session_id,
-                      cols,
-                      rows,
-                    })}
-                  />
+                  {/* One TerminalTab per session, all always mounted to preserve xterm
+                      history across session switches. Hidden via CSS when not active. */}
+                  {Object.values(sessions).map(session => (
+                    <TerminalTab
+                      key={session.session_id}
+                      sessionId={session.session_id}
+                      hidden={tab !== 'work' || session.session_id !== activeSessionId}
+                      onRegister={(writeFn) => {
+                        terminalWriters.current[session.session_id] = writeFn
+                      }}
+                      onUnregister={() => {
+                        delete terminalWriters.current[session.session_id]
+                      }}
+                      onInput={(data) => wsRef.current?.send({
+                        type: 'input',
+                        session_id: session.session_id,
+                        data,
+                      })}
+                      onResize={(cols, rows) => wsRef.current?.send({
+                        type: 'resize',
+                        session_id: session.session_id,
+                        cols,
+                        rows,
+                      })}
+                    />
+                  ))}
                   {tab === 'tasks' && <TasksTab jobs={[]} />}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}
                   {tab === 'tools' && <ToolsTab tools={activeSession.tools} />}
