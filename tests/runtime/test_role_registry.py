@@ -1,54 +1,70 @@
 from pathlib import Path
 import pytest
-from harness_claw.role_registry import RoleConfig, RoleRegistry
+from harness_claw.role_registry import RoleRegistry, RoleConfig, GatewayConfig
 
+YAML = """
+policy:
+  engine: local
 
-def test_load_roles(tmp_path: Path) -> None:
-    yaml_file = tmp_path / "agents.yaml"
-    yaml_file.write_text("""
+memory:
+  backend: sqlite
+  path: ./memory.db
+
+broker:
+  dispatcher: local
+
+connectors:
+  - type: local
+  - type: gateway
+    heartbeat_ttl: 30
+    bootstrap_token: "testtoken"
+
 roles:
-  - id: general-purpose
-    name: General Purpose
+  - id: orchestrator
+    name: Orchestrator
     provider: claude-code
     model: claude-sonnet-4-6
-    system_prompt: "You are a helpful assistant."
+    system_prompt: "You orchestrate."
     max_tokens: 8192
-  - id: code-writer
-    name: Code Writer
+    scopes: [agent:list, agent:delegate, agent:spawn, memory:read, memory:write]
+    caps: [orchestration, planning]
+  - id: coder
+    name: Coder
     provider: claude-code
     model: claude-sonnet-4-6
-    system_prompt: "You write clean code."
-    max_tokens: 8192
-""")
-    registry = RoleRegistry(yaml_file)
+    system_prompt: "You write code."
+    scopes: [agent:list, memory:read, memory:write]
+    caps: [python, typescript]
+"""
+
+@pytest.fixture
+def registry(tmp_path):
+    p = tmp_path / "agents.yaml"
+    p.write_text(YAML)
+    return RoleRegistry(p)
+
+def test_role_scopes_parsed(registry):
+    role = registry.get("orchestrator")
+    assert role.scopes == ["agent:list", "agent:delegate", "agent:spawn", "memory:read", "memory:write", "agent:report"]
+
+def test_role_caps_parsed(registry):
+    role = registry.get("coder")
+    assert role.caps == ["python", "typescript"]
+
+def test_all_agents_get_report_scope(registry):
+    role = registry.get("coder")
+    assert "agent:report" in role.scopes
+
+def test_gateway_config_parsed(registry):
+    cfg = registry.gateway_config
+    assert cfg.policy_engine == "local"
+    assert cfg.memory_backend == "sqlite"
+    assert cfg.dispatcher == "local"
+    assert cfg.gateway_bootstrap_token == "testtoken"
+    assert cfg.gateway_heartbeat_ttl == 30
+
+def test_existing_roles_still_load(registry):
     roles = registry.all()
     assert len(roles) == 2
-    assert roles[0].id == "general-purpose"
-    assert roles[1].id == "code-writer"
-
-
-def test_get_role(tmp_path: Path) -> None:
-    yaml_file = tmp_path / "agents.yaml"
-    yaml_file.write_text("""
-roles:
-  - id: general-purpose
-    name: General Purpose
-    provider: claude-code
-    model: claude-sonnet-4-6
-    system_prompt: "You are a helpful assistant."
-    max_tokens: 8192
-""")
-    registry = RoleRegistry(yaml_file)
-    role = registry.get("general-purpose")
-    assert role is not None
-    assert role.name == "General Purpose"
-    assert role.model == "claude-sonnet-4-6"
-    assert role.system_prompt == "You are a helpful assistant."
-    assert role.max_tokens == 8192
-
-
-def test_get_missing_role(tmp_path: Path) -> None:
-    yaml_file = tmp_path / "agents.yaml"
-    yaml_file.write_text("roles: []")
-    registry = RoleRegistry(yaml_file)
-    assert registry.get("nonexistent") is None
+    assert registry.get("orchestrator") is not None
+    assert registry.get("coder") is not None

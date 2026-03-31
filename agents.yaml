@@ -1,10 +1,28 @@
+policy:
+  engine: local
+
+memory:
+  backend: sqlite
+  path: ./memory.db
+
+broker:
+  dispatcher: local
+
+connectors:
+  - type: local
+  - type: gateway
+    heartbeat_ttl: 30
+    bootstrap_token: "changeme"
+
 roles:
-  - id: general-purpose
-    name: General Purpose
+  - id: orchestrator
+    name: Orchestrator
     provider: claude-code
-    model: claude-sonnet-4-6
-    system_prompt: "You are a helpful assistant."
+    model: claude-opus-4-6
+    system_prompt: "You are an orchestrator agent. You break complex tasks into subtasks and delegate them to specialist agents."
     max_tokens: 8192
+    scopes: [agent:list, agent:delegate, agent:spawn, memory:read, memory:write]
+    caps: [orchestration, planning]
 
   - id: code-writer
     name: Code Writer
@@ -12,10 +30,5 @@ roles:
     model: claude-sonnet-4-6
     system_prompt: "You write clean, well-tested code."
     max_tokens: 8192
-
-  - id: reviewer
-    name: Code Reviewer
-    provider: claude-code
-    model: claude-sonnet-4-6
-    system_prompt: "You review code for correctness, clarity, and security."
-    max_tokens: 4096
+    scopes: [agent:list, memory:read, memory:write]
+    caps: [python, typescript, testing]
