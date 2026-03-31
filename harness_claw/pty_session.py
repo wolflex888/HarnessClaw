@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import select
 from collections.abc import Callable, Awaitable
 
 import ptyprocess
@@ -61,7 +62,15 @@ class PtySession:
         loop = asyncio.get_running_loop()
         while self._proc and self._proc.isalive():
             try:
-                data = await loop.run_in_executor(None, lambda: self._proc.read(4096, timeout=1))
+                # select with 1s timeout lets the task be cancelled between reads
+                # without blocking the executor thread indefinitely
+                proc = self._proc
+                ready = await loop.run_in_executor(
+                    None, lambda: select.select([proc.fd], [], [], 1.0)[0]
+                )
+                if not ready:
+                    continue  # timeout, no data yet — loop to check isalive()
+                data = await loop.run_in_executor(None, proc.read, 4096)
                 if data:
                     for cb in list(self._callbacks):
                         await cb(data)
@@ -69,10 +78,6 @@ class PtySession:
                 break
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
-                # ptyprocess raises TIMEOUT when read times out with no data; loop again
-                exc_name = type(exc).__name__
-                if "TIMEOUT" in exc_name or "Timeout" in exc_name:
-                    continue
+            except Exception:
                 _logger.exception("PtySession %s: unexpected error in read loop", self.session_id)
                 break
