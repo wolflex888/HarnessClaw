@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { WsClient } from './ws'
-import type { RoleConfig, SessionState, WSIncoming } from './types'
+import type { RoleConfig, SessionState, WSIncoming, TaskRecord } from './types'
 import { SessionSidebar } from './components/SessionSidebar'
 import { SessionCreatePanel } from './components/SessionCreatePanel'
 import { SessionCostBar } from './components/SessionCostBar'
@@ -9,6 +9,7 @@ import { TerminalTab } from './components/TerminalTab'
 import { TasksTab } from './components/TasksTab'
 import { AgentTab } from './components/AgentTab'
 import { ToolsTab } from './components/ToolsTab'
+import { MemoryTab } from './components/MemoryTab'
 
 function emptySessionState(data: {
   session_id: string; role_id: string; working_dir: string; model: string;
@@ -25,6 +26,7 @@ function emptySessionState(data: {
 export default function App() {
   const [roles, setRoles] = useState<RoleConfig[]>([])
   const [sessions, setSessions] = useState<Record<string, SessionState>>({})
+  const [tasks, setTasks] = useState<Record<string, TaskRecord>>({})
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('work')
@@ -58,12 +60,12 @@ export default function App() {
     const msg = raw as WSIncoming
 
     if (msg.type === 'output') {
+      const binary = atob(msg.data)
+      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
       const writeFn = terminalWriters.current[msg.session_id]
-      if (writeFn) {
-        const binary = atob(msg.data)
-        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
-        writeFn(bytes)
-      }
+      if (writeFn) writeFn(bytes)
+      const taskWriteFn = terminalWriters.current[`task:${msg.session_id}`]
+      if (taskWriteFn) taskWriteFn(bytes)
     } else if (msg.type === 'cost_update') {
       setSessions(prev => {
         const existing = prev[msg.session_id]
@@ -91,6 +93,8 @@ export default function App() {
         return next
       })
       setActiveSessionId(prev => prev === msg.session_id ? null : prev)
+    } else if (msg.type === 'task.created' || msg.type === 'task.updated' || msg.type === 'task.completed') {
+      setTasks(prev => ({ ...prev, [msg.task.task_id]: msg.task }))
     }
   }, [])
 
@@ -180,9 +184,18 @@ export default function App() {
                       })}
                     />
                   ))}
-                  {tab === 'tasks' && <TasksTab jobs={[]} />}
+                  {tab === 'tasks' && (
+                    <TasksTab
+                      tasks={Object.values(tasks)}
+                      sessions={sessions}
+                      terminalWriters={terminalWriters}
+                      onInput={(sessionId, data) => wsRef.current?.send({ type: 'input', session_id: sessionId, data })}
+                      onResize={(sessionId, cols, rows) => wsRef.current?.send({ type: 'resize', session_id: sessionId, cols, rows })}
+                    />
+                  )}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}
                   {tab === 'tools' && <ToolsTab tools={activeSession.tools} />}
+                  {tab === 'memory' && <MemoryTab />}
                 </>
               )}
             </TabPanel>
