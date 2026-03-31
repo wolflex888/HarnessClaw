@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { WsClient } from './ws'
 import type { RoleConfig, SessionState, WSIncoming } from './types'
 import { SessionSidebar } from './components/SessionSidebar'
 import { SessionCreatePanel } from './components/SessionCreatePanel'
 import { SessionCostBar } from './components/SessionCostBar'
-import { TabPanel } from './components/TabPanel'
+import { TabPanel, type TabId } from './components/TabPanel'
 import { TerminalTab } from './components/TerminalTab'
 import { TasksTab } from './components/TasksTab'
 import { AgentTab } from './components/AgentTab'
@@ -27,6 +27,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, SessionState>>({})
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabId>('work')
   const wsRef = useRef<WsClient | null>(null)
   // Maps session_id → the xterm write function for that terminal
   const terminalWriters = useRef<Record<string, (data: Uint8Array) => void>>({})
@@ -150,34 +151,35 @@ export default function App() {
               sessionName={activeSession.name}
               status={activeSession.status}
             />
-            <TabPanel>
-              {(activeTab) => {
-                if (activeTab === 'work') return (
-                  <TerminalTab
-                    key={activeSession.session_id}
-                    sessionId={activeSession.session_id}
-                    onRegister={(writeFn) => {
-                      terminalWriters.current[activeSession.session_id] = writeFn
-                    }}
-                    onUnregister={() => {
-                      delete terminalWriters.current[activeSession.session_id]
-                    }}
-                    onInput={(data) => wsRef.current?.send({
-                      type: 'input',
-                      session_id: activeSession.session_id,
-                      data,
-                    })}
-                    onResize={(cols, rows) => wsRef.current?.send({
-                      type: 'resize',
-                      session_id: activeSession.session_id,
-                      cols,
-                      rows,
-                    })}
-                  />
-                )
-                if (activeTab === 'tasks') return <TasksTab jobs={[]} />
-                if (activeTab === 'agent') return <AgentTab session={activeSession} role={activeRole} />
-                if (activeTab === 'tools') return <ToolsTab tools={activeSession.tools} />
+            {/* TerminalTab is always mounted to preserve xterm state across tab switches.
+                We use display:none to hide it when another tab is active. */}
+            <TerminalTab
+              key={activeSession.session_id}
+              sessionId={activeSession.session_id}
+              hidden={activeTab !== 'work'}
+              onRegister={(writeFn) => {
+                terminalWriters.current[activeSession.session_id] = writeFn
+              }}
+              onUnregister={() => {
+                delete terminalWriters.current[activeSession.session_id]
+              }}
+              onInput={(data) => wsRef.current?.send({
+                type: 'input',
+                session_id: activeSession.session_id,
+                data,
+              })}
+              onResize={(cols, rows) => wsRef.current?.send({
+                type: 'resize',
+                session_id: activeSession.session_id,
+                cols,
+                rows,
+              })}
+            />
+            <TabPanel activeTab={activeTab} onTabChange={setActiveTab}>
+              {(tab): ReactNode => {
+                if (tab === 'tasks') return <TasksTab jobs={[]} />
+                if (tab === 'agent') return <AgentTab session={activeSession} role={activeRole} />
+                if (tab === 'tools') return <ToolsTab tools={activeSession.tools} />
                 return null
               }}
             </TabPanel>

@@ -113,7 +113,16 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 runner.resize(data["session_id"], cols=data["cols"], rows=data["rows"])
 
             elif msg_type == "cancel":
-                runner.kill_session(data["session_id"])
+                session_id = data["session_id"]
+                runner.kill_session(session_id)
+                session = store.get(session_id)
+                if session:
+                    await runner._broadcast({
+                        "type": "session_update",
+                        "session_id": session_id,
+                        "status": "killed",
+                        "name": session.name,
+                    })
 
     except WebSocketDisconnect:
         pass

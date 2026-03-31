@@ -5,14 +5,16 @@ import '@xterm/xterm/css/xterm.css'
 
 interface Props {
   sessionId: string
+  hidden: boolean
   onRegister: (writeFn: (data: Uint8Array) => void) => void
   onUnregister: () => void
   onInput: (data: string) => void  // base64-encoded keystroke bytes
   onResize: (cols: number, rows: number) => void
 }
 
-export function TerminalTab({ sessionId, onRegister, onUnregister, onInput, onResize }: Props) {
+export function TerminalTab({ sessionId, hidden, onRegister, onUnregister, onInput, onResize }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -24,6 +26,7 @@ export function TerminalTab({ sessionId, onRegister, onUnregister, onInput, onRe
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     })
     const fitAddon = new FitAddon()
+    fitAddonRef.current = fitAddon
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
     fitAddon.fit()
@@ -50,6 +53,7 @@ export function TerminalTab({ sessionId, onRegister, onUnregister, onInput, onRe
     onResize(term.cols, term.rows)
 
     return () => {
+      fitAddonRef.current = null
       onUnregister()
       dataDispose.dispose()
       ro.disconnect()
@@ -57,11 +61,18 @@ export function TerminalTab({ sessionId, onRegister, onUnregister, onInput, onRe
     }
   }, [sessionId])  // remount when session changes
 
+  // Re-fit when tab becomes visible — the container was display:none so dimensions were 0
+  useEffect(() => {
+    if (!hidden && fitAddonRef.current) {
+      fitAddonRef.current.fit()
+    }
+  }, [hidden])
+
   return (
     <div
       ref={containerRef}
       className="flex-1 min-h-0"
-      style={{ padding: '8px', backgroundColor: '#030712' }}
+      style={{ padding: '8px', backgroundColor: '#030712', display: hidden ? 'none' : 'flex' }}
     />
   )
 }

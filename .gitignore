@@ -208,3 +208,6 @@ __marimo__/
 
 # Superpowers brainstorm sessions
 .superpowers/
+ui/node_modules/
+ui/dist/
+sessions.json
