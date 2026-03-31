@@ -208,6 +208,9 @@ __marimo__/
 
 # Superpowers brainstorm sessions
 .superpowers/
+
+# Git worktrees
+.worktrees/
 ui/node_modules/
 ui/dist/
 sessions.json
