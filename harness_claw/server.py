@@ -75,10 +75,11 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)
-def delete_session(session_id: str) -> None:
+async def delete_session(session_id: str) -> None:
     if store.get(session_id) is None:
         raise HTTPException(status_code=404, detail="Session not found")
     runner.delete_session(session_id)
+    await runner._broadcast({"type": "session_deleted", "session_id": session_id})
 
 
 # --- WebSocket ---

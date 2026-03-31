@@ -116,9 +116,8 @@ class JobRunner:
 
     def delete_session(self, session_id: str) -> None:
         _logger.info("Deleting session %s", session_id)
+        # kill_session already pops from _pty_sessions and _cost_pollers
         self.kill_session(session_id)
-        self._pty_sessions.pop(session_id, None)
-        self._cost_pollers.pop(session_id, None)
         session = self._store.get(session_id)
         if session:
             self._delete_claude_session(session)
