@@ -1,4 +1,10 @@
-import type { Job } from '../types'
+interface Job {
+  job_id: string
+  session_id: string
+  title: string
+  status: string
+  progress: number | null
+}
 
 interface Props {
   jobs: Job[]
