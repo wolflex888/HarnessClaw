@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import inspect
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Awaitable
@@ -12,6 +12,8 @@ from harness_claw.pty_session import PtySession
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
 from harness_claw.session_store import SessionStore
+
+_logger = logging.getLogger(__name__)
 
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -41,11 +43,18 @@ class JobRunner:
             await _call_send(send, msg)
 
     async def start_session(self, session: Session) -> None:
-        role = self._registry.get(session.role_id)
-        if role is None:
+        session_id = session.session_id
+
+        if session_id in self._pty_sessions:
+            _logger.warning("start_session called for already-running session %s; ignoring", session_id)
             return
 
-        session_id = session.session_id
+        role = self._registry.get(session.role_id)
+        if role is None:
+            _logger.error("start_session: role %r not found for session %s", session.role_id, session.session_id)
+            return
+
+        _logger.info("Starting PTY session %s (role=%s)", session_id, session.role_id)
 
         pty = PtySession(session_id)
 
@@ -59,6 +68,10 @@ class JobRunner:
         pty.add_output_callback(on_output)
         await pty.start(role.system_prompt, role.model, session.working_dir)
         self._pty_sessions[session_id] = pty
+
+        session.status = "running"
+        self._store.save(session)
+        await self._broadcast({"type": "session_update", "session_id": session_id, "status": "running", "name": session.name})
 
         async def on_cost_update(sid: str, cost: float, input_tokens: int, output_tokens: int) -> None:
             s = self._store.get(sid)
@@ -89,14 +102,20 @@ class JobRunner:
             pty.resize(cols=cols, rows=rows)
 
     def kill_session(self, session_id: str) -> None:
-        pty = self._pty_sessions.get(session_id)
+        _logger.info("Killing session %s", session_id)
+        pty = self._pty_sessions.pop(session_id, None)
         if pty:
             pty.kill()
-        poller = self._cost_pollers.get(session_id)
+        poller = self._cost_pollers.pop(session_id, None)
         if poller:
             poller.stop()
+        session = self._store.get(session_id)
+        if session:
+            session.status = "killed"
+            self._store.save(session)
 
     def delete_session(self, session_id: str) -> None:
+        _logger.info("Deleting session %s", session_id)
         self.kill_session(session_id)
         self._pty_sessions.pop(session_id, None)
         self._cost_pollers.pop(session_id, None)
