@@ -151,37 +151,38 @@ export default function App() {
               sessionName={activeSession.name}
               status={activeSession.status}
             />
-            {/* TerminalTab is always mounted to preserve xterm state across tab switches.
-                We use display:none to hide it when another tab is active. */}
-            <TerminalTab
-              key={activeSession.session_id}
-              sessionId={activeSession.session_id}
-              hidden={activeTab !== 'work'}
-              onRegister={(writeFn) => {
-                terminalWriters.current[activeSession.session_id] = writeFn
-              }}
-              onUnregister={() => {
-                delete terminalWriters.current[activeSession.session_id]
-              }}
-              onInput={(data) => wsRef.current?.send({
-                type: 'input',
-                session_id: activeSession.session_id,
-                data,
-              })}
-              onResize={(cols, rows) => wsRef.current?.send({
-                type: 'resize',
-                session_id: activeSession.session_id,
-                cols,
-                rows,
-              })}
-            />
             <TabPanel activeTab={activeTab} onTabChange={setActiveTab}>
-              {(tab): ReactNode => {
-                if (tab === 'tasks') return <TasksTab jobs={[]} />
-                if (tab === 'agent') return <AgentTab session={activeSession} role={activeRole} />
-                if (tab === 'tools') return <ToolsTab tools={activeSession.tools} />
-                return null
-              }}
+              {(tab): ReactNode => (
+                <>
+                  {/* TerminalTab is always mounted inside the content area to preserve
+                      xterm state across tab switches. Hidden via CSS when not active. */}
+                  <TerminalTab
+                    key={activeSession.session_id}
+                    sessionId={activeSession.session_id}
+                    hidden={tab !== 'work'}
+                    onRegister={(writeFn) => {
+                      terminalWriters.current[activeSession.session_id] = writeFn
+                    }}
+                    onUnregister={() => {
+                      delete terminalWriters.current[activeSession.session_id]
+                    }}
+                    onInput={(data) => wsRef.current?.send({
+                      type: 'input',
+                      session_id: activeSession.session_id,
+                      data,
+                    })}
+                    onResize={(cols, rows) => wsRef.current?.send({
+                      type: 'resize',
+                      session_id: activeSession.session_id,
+                      cols,
+                      rows,
+                    })}
+                  />
+                  {tab === 'tasks' && <TasksTab jobs={[]} />}
+                  {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}
+                  {tab === 'tools' && <ToolsTab tools={activeSession.tools} />}
+                </>
+              )}
             </TabPanel>
           </>
         ) : (
