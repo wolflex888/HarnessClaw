@@ -12,7 +12,7 @@ interface Props {
   onResize: (cols: number, rows: number) => void
 }
 
-export function TerminalTab({ sessionId, hidden, onRegister, onUnregister, onInput, onResize }: Props) {
+export function TerminalTab({ sessionId: _sessionId, hidden, onRegister, onUnregister, onInput, onResize }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
 
@@ -59,7 +59,7 @@ export function TerminalTab({ sessionId, hidden, onRegister, onUnregister, onInp
       ro.disconnect()
       term.dispose()
     }
-  }, [sessionId])  // remount when session changes
+  }, [])  // mount once; App keeps all terminals alive with display:none
 
   // Re-fit when tab becomes visible — the container was display:none so dimensions were 0
   useEffect(() => {
