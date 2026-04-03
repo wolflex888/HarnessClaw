@@ -120,7 +120,8 @@ export default function App() {
   }, [handleWsMessage])
 
   const handleRetry = useCallback(async (taskId: string) => {
-    await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' })
+    const res = await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' })
+    if (!res.ok) console.error('retry failed', res.status, await res.text())
     // new task arrives via WS task.created — no additional state update needed
   }, [])
 

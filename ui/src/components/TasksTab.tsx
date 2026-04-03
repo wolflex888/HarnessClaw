@@ -115,7 +115,7 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry 
           </div>
           <TaskTerminalPanel sessionId={task.delegated_to} terminalWriters={terminalWriters} />
           {task.result && (
-            <div className="text-xs text-green-400 bg-gray-800 rounded p-2 whitespace-pre-wrap">
+            <div className={`text-xs bg-gray-800 rounded p-2 whitespace-pre-wrap ${task.status === 'failed' ? 'text-red-400' : 'text-green-400'}`}>
               {typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}
             </div>
           )}
