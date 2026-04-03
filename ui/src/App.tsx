@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { WsClient } from './ws'
-import type { RoleConfig, SessionState, WSIncoming, TaskRecord, ToolInfo } from './types'
+import type { RoleConfig, SessionState, WSIncoming, TaskRecord, ToolInfo, WorkflowRun } from './types'
 import { SessionSidebar } from './components/SessionSidebar'
 import { SessionCreatePanel } from './components/SessionCreatePanel'
 import { SessionCostBar } from './components/SessionCostBar'
@@ -29,6 +29,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, SessionState>>({})
   const [tasks, setTasks] = useState<Record<string, TaskRecord>>({})
   const [mcpTools, setMcpTools] = useState<ToolInfo[]>([])
+  const [workflowRuns, setWorkflowRuns] = useState<Record<string, WorkflowRun>>({})
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('work')
@@ -46,6 +47,14 @@ export default function App() {
         const taskMap: Record<string, TaskRecord> = {}
         for (const t of taskList) taskMap[t.task_id] = t
         setTasks(taskMap)
+      })
+      .catch(console.error)
+    fetch('/api/workflows/runs')
+      .then(r => r.json())
+      .then((runList: WorkflowRun[]) => {
+        const runMap: Record<string, WorkflowRun> = {}
+        for (const r of runList) runMap[r.run_id] = r
+        setWorkflowRuns(runMap)
       })
       .catch(console.error)
     fetch('/api/sessions').then(r => r.json()).then((grouped: Record<string, Array<{
@@ -111,6 +120,46 @@ export default function App() {
       msg.type === 'task.failed'
     ) {
       setTasks(prev => ({ ...prev, [msg.task.task_id]: msg.task }))
+    } else if (msg.type === 'workflow.started') {
+      setWorkflowRuns(prev => ({
+        ...prev,
+        [msg.run_id]: {
+          ...(prev[msg.run_id] ?? {}),
+          run_id: msg.run_id,
+          workflow_id: msg.workflow_id,
+          status: 'running' as const,
+          current_step_id: msg.step_id,
+          step_results: {},
+          input: '',
+          initiated_by: '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      }))
+    } else if (msg.type === 'workflow.step') {
+      setWorkflowRuns(prev => {
+        const existing = prev[msg.run_id]
+        if (!existing) return prev
+        return {
+          ...prev,
+          [msg.run_id]: {
+            ...existing,
+            step_results: { ...existing.step_results, [msg.step_id]: msg.result },
+          },
+        }
+      })
+    } else if (msg.type === 'workflow.completed') {
+      setWorkflowRuns(prev => {
+        const existing = prev[msg.run_id]
+        if (!existing) return prev
+        return { ...prev, [msg.run_id]: { ...existing, status: 'completed' } }
+      })
+    } else if (msg.type === 'workflow.failed') {
+      setWorkflowRuns(prev => {
+        const existing = prev[msg.run_id]
+        if (!existing) return prev
+        return { ...prev, [msg.run_id]: { ...existing, status: 'failed' } }
+      })
     }
   }, [])
 
@@ -118,6 +167,15 @@ export default function App() {
     wsRef.current = new WsClient(handleWsMessage)
     return () => wsRef.current?.destroy()
   }, [handleWsMessage])
+
+  const handleRunWorkflow = useCallback(async (workflowId: string, input: string) => {
+    const res = await fetch(`/api/workflows/${workflowId}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, initiated_by: 'dashboard' }),
+    })
+    if (!res.ok) console.error('workflow run failed', res.status, await res.text())
+  }, [])
 
   const handleRetry = useCallback(async (taskId: string) => {
     const res = await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' })
@@ -220,6 +278,11 @@ export default function App() {
                   {tab === 'tools' && <ToolsTab tools={mcpTools} />}
                   {tab === 'memory' && <MemoryTab />}
                   {tab === 'audit' && <AuditTab />}
+                  {tab === 'workflows' && (
+                    <div className="flex-1 flex items-center justify-center text-gray-500 text-sm" data-runs={Object.keys(workflowRuns).length} onClick={() => handleRunWorkflow('', '')}>
+                      Workflows tab (coming in next task)
+                    </div>
+                  )}
                 </>
               )}
             </TabPanel>

@@ -67,6 +67,38 @@ export type WSIncoming =
   | { type: 'task.updated'; task: TaskRecord }
   | { type: 'task.completed'; task: TaskRecord }
   | { type: 'task.failed'; task: TaskRecord }
+  | { type: 'workflow.started'; run_id: string; workflow_id: string; step_id: string }
+  | { type: 'workflow.step'; run_id: string; step_id: string; status: 'completed' | 'failed'; result: unknown }
+  | { type: 'workflow.completed'; run_id: string }
+  | { type: 'workflow.failed'; run_id: string; reason: string }
+
+// Workflow definitions (from /api/workflows)
+export interface WorkflowStep {
+  id: string
+  caps: string[]
+  instructions: string
+  on_success: string
+  on_failure: string
+}
+
+export interface WorkflowDefinition {
+  id: string
+  name: string
+  steps: WorkflowStep[]
+}
+
+// Workflow run (from /api/workflows/runs)
+export interface WorkflowRun {
+  run_id: string
+  workflow_id: string
+  status: 'running' | 'completed' | 'failed'
+  current_step_id: string
+  step_results: Record<string, unknown>
+  input: string
+  initiated_by: string
+  created_at: string
+  updated_at: string
+}
 
 // WebSocket: client → server
 export type WSSend =
