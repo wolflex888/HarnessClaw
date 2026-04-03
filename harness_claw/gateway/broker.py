@@ -222,6 +222,10 @@ class Broker:
             )
             for sub in self._callback_subs.pop(task_id, []):
                 await self._event_bus.unsubscribe(sub)
+        try:
+            asyncio.create_task(self._notify("task.failed", task))
+        except RuntimeError:
+            pass
         return task
 
     def get_task(self, task_id: str) -> Task | None:
