@@ -201,13 +201,16 @@ async def retry_task(task_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="task not found")
     if task.status != "failed":
         raise HTTPException(status_code=400, detail=f"task status is {task.status!r}, not 'failed'")
-    new_task_id = await broker.delegate(
-        delegated_by=task.delegated_by,
-        caps=task.caps_requested,
-        instructions=task.instructions,
-        context=task.context,
-        callback=task.callback,
-    )
+    try:
+        new_task_id = await broker.delegate(
+            delegated_by=task.delegated_by,
+            caps=task.caps_requested,
+            instructions=task.instructions,
+            context=task.context,
+            callback=task.callback,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"task_id": new_task_id}
 
 

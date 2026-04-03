@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from harness_claw.gateway.capability import AgentAdvertisement, CapabilityConnector
 from harness_claw.gateway.event_bus import EventBus
-from harness_claw.gateway.task_store import Task, TaskStore
+from harness_claw.gateway.task_store import Task, TaskStore, TaskStoreProtocol
 
 
 class TaskDispatcher(Protocol):
@@ -49,7 +49,7 @@ class Broker:
         connectors: list[CapabilityConnector],
         dispatcher: TaskDispatcher,
         event_bus: EventBus | None = None,
-        task_store: TaskStore | None = None,
+        task_store: TaskStoreProtocol | None = None,
     ) -> None:
         self._connectors = connectors
         self._dispatcher = dispatcher

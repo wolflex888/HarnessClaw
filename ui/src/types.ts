@@ -51,6 +51,8 @@ export interface TaskRecord {
   progress_pct: number
   progress_msg: string
   result: string | Record<string, unknown> | null
+  context: Record<string, unknown> | null
+  callback: boolean
   created_at: string
   updated_at: string
 }

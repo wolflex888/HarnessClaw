@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -40,6 +40,14 @@ class Task:
             "updated_at": self.updated_at,
             "callback": self.callback,
         }
+
+
+@runtime_checkable
+class TaskStoreProtocol(Protocol):
+    """Structural interface for task stores — used as the type for Broker.task_store."""
+    def save(self, task: Task) -> None: ...
+    def get(self, task_id: str) -> Task | None: ...
+    def all(self) -> list[Task]: ...
 
 
 class TaskStore:
