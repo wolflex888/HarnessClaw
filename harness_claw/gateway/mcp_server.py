@@ -71,11 +71,22 @@ class GatewayMCP:
             for a in results
         ]
 
-    async def agent_delegate(self, token: str, caps: list[str], instructions: str) -> dict[str, Any]:
+    async def agent_delegate(
+        self,
+        token: str,
+        caps: list[str],
+        instructions: str,
+        context: dict[str, Any] | None = None,
+        callback: bool = False,
+    ) -> dict[str, Any]:
         subject = self._auth(token, "agent:delegate")
         try:
             task_id = await self._broker.delegate(
-                delegated_by=subject, caps=caps, instructions=instructions
+                delegated_by=subject,
+                caps=caps,
+                instructions=instructions,
+                context=context,
+                callback=callback,
             )
         except ValueError as e:
             self._audit.log(AuditEvent(
@@ -85,7 +96,7 @@ class GatewayMCP:
             raise
         self._audit.log(AuditEvent(
             subject=subject, operation="agent.delegate", resource=task_id,
-            outcome="allowed", details={"caps": caps},
+            outcome="allowed", details={"caps": caps, "callback": callback},
         ))
         return {"task_id": task_id}
 

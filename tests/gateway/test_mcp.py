@@ -85,3 +85,73 @@ async def test_memory_get_requires_read_scope(gateway, token_store):
     token = token_store.issue("s1", ["memory:write"])  # missing memory:read
     with pytest.raises(Exception, match="denied|scope"):
         await gateway.memory_get(token=token, namespace="ns", key="k")
+
+
+async def test_agent_delegate_with_context_and_callback(gateway, token_store, connector, dispatcher):
+    await connector.register(AgentAdvertisement(
+        session_id="coder-1", role_id="coder", caps=["python"],
+        status="idle", task_count=0, connector="local",
+    ))
+    dispatcher.register_writer("coder-1", lambda data: None)
+    token = token_store.issue("orch", ["agent:delegate"])
+
+    result = await gateway.agent_delegate(
+        token=token,
+        caps=["python"],
+        instructions="write tests",
+        context={"files": ["a.py", "b.py"], "priorities": ["bugs"]},
+        callback=True,
+    )
+    assert "task_id" in result
+
+    task = gateway._broker.get_task(result["task_id"])
+    assert task.context == {"files": ["a.py", "b.py"], "priorities": ["bugs"]}
+    assert task.callback is True
+
+
+async def test_agent_complete_with_dict_result(gateway, token_store, connector, dispatcher):
+    await connector.register(AgentAdvertisement(
+        session_id="coder-1", role_id="coder", caps=["python"],
+        status="idle", task_count=0, connector="local",
+    ))
+    dispatcher.register_writer("coder-1", lambda data: None)
+
+    delegate_token = token_store.issue("orch", ["agent:delegate"])
+    result = await gateway.agent_delegate(
+        token=delegate_token, caps=["python"], instructions="write it"
+    )
+    task_id = result["task_id"]
+
+    complete_token = token_store.issue("coder-1", ["agent:report"])
+    verdict = {"verdict": "APPROVE", "summary": "all good", "findings": []}
+    complete_result = await gateway.agent_complete(
+        token=complete_token, task_id=task_id, result=verdict
+    )
+    assert complete_result["status"] == "completed"
+
+    task = gateway._broker.get_task(task_id)
+    assert task.result == verdict
+    assert task.result["verdict"] == "APPROVE"
+
+
+async def test_agent_complete_with_string_result_still_works(gateway, token_store, connector, dispatcher):
+    await connector.register(AgentAdvertisement(
+        session_id="coder-1", role_id="coder", caps=["python"],
+        status="idle", task_count=0, connector="local",
+    ))
+    dispatcher.register_writer("coder-1", lambda data: None)
+
+    delegate_token = token_store.issue("orch", ["agent:delegate"])
+    result = await gateway.agent_delegate(
+        token=delegate_token, caps=["python"], instructions="write it"
+    )
+    task_id = result["task_id"]
+
+    complete_token = token_store.issue("coder-1", ["agent:report"])
+    complete_result = await gateway.agent_complete(
+        token=complete_token, task_id=task_id, result="done!"
+    )
+    assert complete_result["status"] == "completed"
+
+    task = gateway._broker.get_task(task_id)
+    assert task.result == "done!"
