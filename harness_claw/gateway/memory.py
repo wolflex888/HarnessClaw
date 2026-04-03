@@ -70,7 +70,9 @@ class SqliteMemoryStore:
 
     def __init__(self, path: Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.row_factory = sqlite3.Row
+        self._embedder = Embedder()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -108,6 +110,13 @@ class SqliteMemoryStore:
                 INSERT INTO memory_fts(rowid, namespace, key, value, summary)
                 VALUES (new.rowid, new.namespace, new.key, new.value, new.summary);
             END;
+            CREATE TABLE IF NOT EXISTS memory_vectors (
+                namespace TEXT NOT NULL,
+                key       TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                PRIMARY KEY (namespace, key),
+                FOREIGN KEY (namespace, key) REFERENCES memory(namespace, key) ON DELETE CASCADE
+            );
         """)
         self._conn.commit()
 
@@ -136,6 +145,14 @@ class SqliteMemoryStore:
             """INSERT OR REPLACE INTO memory (namespace, key, value, summary, tags, size_bytes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (namespace, key, value, summary, json.dumps(tags), len(value.encode()), created_at, now),
+        )
+        # Embed and store vector
+        embed_text = f"{value} {summary}" if summary else value
+        vec = self._embedder.embed(embed_text)
+        self._conn.execute(
+            """INSERT OR REPLACE INTO memory_vectors (namespace, key, embedding)
+               VALUES (?, ?, ?)""",
+            (namespace, key, self._embedder.to_blob(vec)),
         )
         self._conn.commit()
 

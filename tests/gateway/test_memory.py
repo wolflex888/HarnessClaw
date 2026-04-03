@@ -88,3 +88,25 @@ def test_embedder_similar_texts_have_high_similarity():
     sim_unrelated = cosine(v1, v3)
     assert sim_related > sim_unrelated
     assert sim_related > 0.5
+
+
+async def test_set_stores_embedding_vector(store):
+    await store.set("ns", "k", "JWT token validation", summary="auth note", tags=[])
+    row = store._conn.execute(
+        "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
+    ).fetchone()
+    assert row is not None
+    vec = Embedder.from_blob(row["embedding"])
+    assert len(vec) == 768
+
+
+async def test_set_updates_embedding_on_overwrite(store):
+    await store.set("ns", "k", "original text", summary=None, tags=[])
+    row1 = store._conn.execute(
+        "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
+    ).fetchone()
+    await store.set("ns", "k", "completely different text", summary=None, tags=[])
+    row2 = store._conn.execute(
+        "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
+    ).fetchone()
+    assert row1["embedding"] != row2["embedding"]
