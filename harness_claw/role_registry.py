@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+from harness_claw.gateway.workflow_engine import WorkflowDefinition, WorkflowStep
+
 
 @dataclass
 class RoleConfig:
@@ -72,6 +74,24 @@ class RoleRegistry:
                 caps=list(item.get("caps", [])),
             )
             self._roles[role.id] = role
+
+        self.workflow_definitions: dict[str, WorkflowDefinition] = {}
+        for wf_id, wf_data in data.get("workflows", {}).items():
+            steps = [
+                WorkflowStep(
+                    id=step["id"],
+                    caps=list(step.get("caps", [])),
+                    instructions=step["instructions"],
+                    on_success=step["on_success"],
+                    on_failure=step["on_failure"],
+                )
+                for step in wf_data.get("steps", [])
+            ]
+            self.workflow_definitions[wf_id] = WorkflowDefinition(
+                id=wf_id,
+                name=wf_data.get("name", wf_id),
+                steps=steps,
+            )
 
     def all(self) -> list[RoleConfig]:
         return list(self._roles.values())
