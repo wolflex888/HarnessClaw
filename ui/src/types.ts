@@ -50,7 +50,7 @@ export interface TaskRecord {
   status: 'queued' | 'running' | 'completed' | 'failed'
   progress_pct: number
   progress_msg: string
-  result: string | null
+  result: string | Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -64,6 +64,7 @@ export type WSIncoming =
   | { type: 'task.created'; task: TaskRecord }
   | { type: 'task.updated'; task: TaskRecord }
   | { type: 'task.completed'; task: TaskRecord }
+  | { type: 'task.failed'; task: TaskRecord }
 
 // WebSocket: client → server
 export type WSSend =

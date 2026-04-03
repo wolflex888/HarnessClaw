@@ -40,6 +40,14 @@ export default function App() {
   useEffect(() => {
     fetch('/api/roles').then(r => r.json()).then(setRoles).catch(console.error)
     fetch('/api/mcp/tools').then(r => r.json()).then(setMcpTools).catch(console.error)
+    fetch('/api/tasks')
+      .then(r => r.json())
+      .then((taskList: TaskRecord[]) => {
+        const taskMap: Record<string, TaskRecord> = {}
+        for (const t of taskList) taskMap[t.task_id] = t
+        setTasks(taskMap)
+      })
+      .catch(console.error)
     fetch('/api/sessions').then(r => r.json()).then((grouped: Record<string, Array<{
       session_id: string; role_id: string; working_dir: string; model: string;
       name: string; status: 'idle' | 'running' | 'killed';
@@ -96,7 +104,12 @@ export default function App() {
         return next
       })
       setActiveSessionId(prev => prev === msg.session_id ? null : prev)
-    } else if (msg.type === 'task.created' || msg.type === 'task.updated' || msg.type === 'task.completed') {
+    } else if (
+      msg.type === 'task.created' ||
+      msg.type === 'task.updated' ||
+      msg.type === 'task.completed' ||
+      msg.type === 'task.failed'
+    ) {
       setTasks(prev => ({ ...prev, [msg.task.task_id]: msg.task }))
     }
   }, [])
@@ -105,6 +118,11 @@ export default function App() {
     wsRef.current = new WsClient(handleWsMessage)
     return () => wsRef.current?.destroy()
   }, [handleWsMessage])
+
+  const handleRetry = useCallback(async (taskId: string) => {
+    await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' })
+    // new task arrives via WS task.created — no additional state update needed
+  }, [])
 
   const handleKill = useCallback((sessionId: string) => {
     wsRef.current?.send({ type: 'cancel', session_id: sessionId })
@@ -194,6 +212,7 @@ export default function App() {
                       terminalWriters={terminalWriters}
                       onInput={(sessionId, data) => wsRef.current?.send({ type: 'input', session_id: sessionId, data })}
                       onResize={(sessionId, cols, rows) => wsRef.current?.send({ type: 'resize', session_id: sessionId, cols, rows })}
+                      onRetry={handleRetry}
                     />
                   )}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}

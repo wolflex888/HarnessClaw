@@ -9,6 +9,7 @@ interface Props {
   terminalWriters: MutableRefObject<Record<string, (data: Uint8Array) => void>>
   onInput: (sessionId: string, data: string) => void
   onResize: (sessionId: string, cols: number, rows: number) => void
+  onRetry: (taskId: string) => void
 }
 
 function ProgressBar({ pct }: { pct: number }) {
@@ -77,12 +78,13 @@ function TaskTerminalPanel({ sessionId, terminalWriters }: {
   )
 }
 
-function TaskRow({ task, sessions, terminalWriters, expanded, onToggle }: {
+function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry }: {
   task: TaskRecord
   sessions: Record<string, SessionState>
   terminalWriters: MutableRefObject<Record<string, (data: Uint8Array) => void>>
   expanded: boolean
   onToggle: () => void
+  onRetry: (taskId: string) => void
 }) {
   const agentSession = sessions[task.delegated_to]
   const agentName = agentSession?.name || task.delegated_to.slice(0, 8)
@@ -114,8 +116,16 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle }: {
           <TaskTerminalPanel sessionId={task.delegated_to} terminalWriters={terminalWriters} />
           {task.result && (
             <div className="text-xs text-green-400 bg-gray-800 rounded p-2 whitespace-pre-wrap">
-              {task.result}
+              {typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}
             </div>
+          )}
+          {task.status === 'failed' && (
+            <button
+              onClick={() => onRetry(task.task_id)}
+              className="self-start text-xs text-yellow-400 hover:text-yellow-300 px-2 py-1 border border-yellow-800 rounded"
+            >
+              ↺ Retry
+            </button>
           )}
         </div>
       )}
@@ -123,7 +133,7 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle }: {
   )
 }
 
-export function TasksTab({ tasks, sessions, terminalWriters, onInput: _onInput, onResize: _onResize }: Props) {
+export function TasksTab({ tasks, sessions, terminalWriters, onInput: _onInput, onResize: _onResize, onRetry }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const toggle = useCallback((id: string) => {
@@ -153,6 +163,7 @@ export function TasksTab({ tasks, sessions, terminalWriters, onInput: _onInput, 
           terminalWriters={terminalWriters}
           expanded={expandedIds.has(task.task_id)}
           onToggle={() => toggle(task.task_id)}
+          onRetry={onRetry}
         />
       ))}
     </div>
