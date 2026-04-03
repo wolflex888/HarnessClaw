@@ -27,6 +27,7 @@ class GatewayConfig:
     event_bus_backend: str = "local"
     gateway_bootstrap_token: str = ""
     gateway_heartbeat_ttl: int = 30
+    task_retention_days: int = 7
 
 
 class RoleRegistry:
@@ -39,6 +40,7 @@ class RoleRegistry:
         memory = data.get("memory", {})
         broker = data.get("broker", {})
         event_bus = data.get("event_bus", {})
+        tasks = data.get("tasks", {})
         gateway_connector = next(
             (c for c in data.get("connectors", []) if c.get("type") == "gateway"),
             {}
@@ -51,6 +53,7 @@ class RoleRegistry:
             event_bus_backend=event_bus.get("backend", "local"),
             gateway_bootstrap_token=gateway_connector.get("bootstrap_token", ""),
             gateway_heartbeat_ttl=gateway_connector.get("heartbeat_ttl", 30),
+            task_retention_days=tasks.get("retention_days", 7),
         )
 
         for item in data.get("roles", []):

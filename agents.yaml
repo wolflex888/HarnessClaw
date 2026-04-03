@@ -11,6 +11,9 @@ broker:
 event_bus:
   backend: local
 
+tasks:
+  retention_days: 7
+
 connectors:
   - type: local
   - type: gateway
