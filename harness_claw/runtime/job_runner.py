@@ -59,31 +59,21 @@ class JobRunner:
         for send in list(self._senders):
             await _call_send(send, msg)
 
-    def _write_mcp_config(self, cwd: str, token: str) -> None:
-        """Merge HarnessClaw MCP entry into .claude/settings.local.json.
+    def _mcp_config_arg(self, token: str) -> list[str]:
+        """Build --mcp-config flag for the claude subprocess.
 
-        Uses settings.local.json (gitignored, user-local) so the project's
-        committed settings.json is never touched.
+        Passes the MCP server config inline so Claude Code loads it without
+        needing enableAllProjectMcpServers and without writing anything to disk.
         """
-        cwd_expanded = os.path.expanduser(cwd)
-        claude_dir = Path(cwd_expanded) / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        settings_path = claude_dir / "settings.local.json"
-
-        existing: dict[str, Any] = {}
-        if settings_path.exists():
-            try:
-                existing = json.loads(settings_path.read_text())
-            except Exception:
-                pass
-
-        mcp_servers = existing.get("mcpServers", {})
-        mcp_servers["harnessclaw"] = {
-            "type": "sse",
-            "url": f"{self._mcp_base_url}/mcp/sse?token={token}",
-        }
-        existing["mcpServers"] = mcp_servers
-        settings_path.write_text(json.dumps(existing, indent=2))
+        config = json.dumps({
+            "mcpServers": {
+                "harnessclaw": {
+                    "type": "sse",
+                    "url": f"{self._mcp_base_url}/mcp/sse?token={token}",
+                }
+            }
+        })
+        return ["--mcp-config", config]
 
     async def start_session(self, session: Session) -> None:
         session_id = session.session_id
@@ -101,19 +91,20 @@ class JobRunner:
 
         is_terminal = role.provider == "terminal"
 
-        # Issue token and write MCP config (agent sessions only)
+        # Issue token (agent sessions only)
         extra_env: dict[str, str] = {}
+        mcp_args: list[str] = []
         if not is_terminal and self._token_store is not None:
             token = self._token_store.issue(session_id, role.scopes)
             self._session_tokens[session_id] = token
             extra_env["HARNESS_TOKEN"] = token
-            self._write_mcp_config(session.working_dir, token)
+            mcp_args = self._mcp_config_arg(token)
 
         # Build command
         if is_terminal:
             cmd = [os.environ.get("SHELL", "/bin/zsh")]
         else:
-            cmd = ["claude", "--system-prompt", role.system_prompt, "--model", role.model]
+            cmd = ["claude", "--system-prompt", role.system_prompt, "--model", role.model] + mcp_args
 
         pty = PtySession(session_id)
 
