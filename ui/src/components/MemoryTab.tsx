@@ -27,17 +27,17 @@ export function MemoryTab() {
   const loadNamespace = useCallback(async (ns: string) => {
     setActiveNs(ns)
     setSelected(null)
-    const data = await fetch(`/api/memory/${encodeURIComponent(ns)}`).then(r => r.json())
+    const data = await fetch(`/api/memory/${encodeURIComponent(ns)}/entries`).then(r => r.json())
     setEntries(data)
   }, [])
 
   const loadEntry = useCallback(async (ns: string, key: string) => {
-    const data = await fetch(`/api/memory/${encodeURIComponent(ns)}/${encodeURIComponent(key)}`).then(r => r.json())
+    const data = await fetch(`/api/memory/${encodeURIComponent(ns)}/entries/${encodeURIComponent(key)}`).then(r => r.json())
     setSelected(data)
   }, [])
 
   const deleteEntry = useCallback(async (ns: string, key: string) => {
-    await fetch(`/api/memory/${encodeURIComponent(ns)}/${encodeURIComponent(key)}`, { method: 'DELETE' })
+    await fetch(`/api/memory/${encodeURIComponent(ns)}/entries/${encodeURIComponent(key)}`, { method: 'DELETE' })
     setSelected(null)
     if (activeNs) await loadNamespace(activeNs)
   }, [activeNs, loadNamespace])

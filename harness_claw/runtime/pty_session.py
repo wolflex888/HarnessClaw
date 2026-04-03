@@ -20,14 +20,12 @@ class PtySession:
         self._callbacks: list[OutputCallback] = []
         self._read_task: asyncio.Task[None] | None = None
 
-    async def start(self, system_prompt: str, model: str, cwd: str,
+    async def start(self, cmd: list[str], cwd: str,
                     extra_env: dict[str, str] | None = None) -> None:
         if self._proc is not None:
             raise RuntimeError(f"PtySession {self.session_id!r} is already started")
         cwd_expanded = os.path.expanduser(cwd)
-        cmd = ["claude", "--system-prompt", system_prompt, "--model", model]
 
-        # Merge extra env vars into current environment
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)

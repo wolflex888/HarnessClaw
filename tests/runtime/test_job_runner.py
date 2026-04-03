@@ -19,6 +19,7 @@ def make_session(**kwargs) -> Session:
 def make_runner(sessions=None):
     registry = MagicMock(spec=RoleRegistry)
     role = MagicMock()
+    role.provider = "claude-code"
     role.system_prompt = "You are helpful."
     role.model = "claude-sonnet-4-6"
     role.scopes = ["agent:list"]
@@ -46,7 +47,10 @@ async def test_start_session_spawns_pty():
             await runner.start_session(session)
 
         MockPty.assert_called_once_with("s1")
-        mock_pty.start.assert_called_once_with("You are helpful.", "claude-sonnet-4-6", "/tmp", extra_env=None)
+        mock_pty.start.assert_called_once_with(
+            ["claude", "--system-prompt", "You are helpful.", "--model", "claude-sonnet-4-6"],
+            "/tmp", extra_env=None,
+        )
 
 
 async def test_write_forwards_to_pty():

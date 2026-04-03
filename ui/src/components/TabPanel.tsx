@@ -1,6 +1,6 @@
 import React from 'react'
 
-export type TabId = 'work' | 'tasks' | 'agent' | 'tools' | 'memory'
+export type TabId = 'work' | 'tasks' | 'agent' | 'tools' | 'memory' | 'audit'
 
 interface Tab {
   id: TabId
@@ -13,6 +13,7 @@ const TABS: Tab[] = [
   { id: 'agent', label: 'Agent' },
   { id: 'tools', label: 'Tools' },
   { id: 'memory', label: 'Memory' },
+  { id: 'audit', label: 'Audit' },
 ]
 
 interface Props {

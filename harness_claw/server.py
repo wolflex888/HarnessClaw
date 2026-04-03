@@ -199,7 +199,7 @@ async def get_memory_namespaces() -> list[str]:
     return await memory.namespaces()
 
 
-@app.get("/api/memory/{namespace:path}")
+@app.get("/api/memory/{namespace}/entries")
 async def list_memory_entries(namespace: str) -> list[dict[str, Any]]:
     entries = await memory.list(namespace)
     return [
@@ -209,7 +209,7 @@ async def list_memory_entries(namespace: str) -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/api/memory/{namespace:path}/{key}")
+@app.get("/api/memory/{namespace}/entries/{key}")
 async def get_memory_entry(namespace: str, key: str) -> dict[str, Any]:
     entry = await memory.get(namespace, key)
     if entry is None:
@@ -220,9 +220,29 @@ async def get_memory_entry(namespace: str, key: str) -> dict[str, Any]:
     }
 
 
-@app.delete("/api/memory/{namespace:path}/{key}", status_code=204)
+@app.delete("/api/memory/{namespace}/entries/{key}", status_code=204)
 async def delete_memory_entry(namespace: str, key: str) -> None:
     await memory.delete(namespace, key)
+
+
+# MCP tools list (for dashboard Tools tab)
+@app.get("/api/mcp/tools")
+def get_mcp_tools() -> list[dict[str, str]]:
+    return [
+        {"name": "agent.list", "description": "List agents in the capability registry, optionally filtered by caps"},
+        {"name": "agent.delegate", "description": "Delegate a task to the best-matched agent; returns task_id"},
+        {"name": "agent.status", "description": "Check status and progress of a delegated task"},
+        {"name": "agent.spawn", "description": "Spawn a new agent session with a given role"},
+        {"name": "agent.progress", "description": "Report progress on the current task (message + % complete)"},
+        {"name": "agent.complete", "description": "Signal task completion with a result payload"},
+        {"name": "memory.namespaces", "description": "List all memory namespaces"},
+        {"name": "memory.list", "description": "List keys and metadata within a namespace"},
+        {"name": "memory.get", "description": "Load a specific memory entry into context"},
+        {"name": "memory.search", "description": "Hybrid FTS5 + semantic search across a namespace"},
+        {"name": "memory.set", "description": "Write a value to a namespace"},
+        {"name": "memory.delete", "description": "Delete a key from a namespace"},
+        {"name": "memory.tag", "description": "Add tags to a memory entry"},
+    ]
 
 
 # SPA

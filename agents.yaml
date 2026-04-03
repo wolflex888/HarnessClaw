@@ -126,6 +126,14 @@ roles:
     scopes: [agent:list, memory:read, memory:write]
     caps: [python, typescript, testing]
 
+  - id: terminal
+    name: Terminal
+    provider: terminal
+    model: ""
+    system_prompt: ""
+    scopes: []
+    caps: []
+
   - id: code-reviewer
     name: Code Reviewer
     provider: claude-code

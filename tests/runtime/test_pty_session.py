@@ -25,25 +25,21 @@ def mock_select(mock_proc):
         yield m
 
 
-async def test_start_spawns_claude_with_correct_args(mock_proc):
+async def test_start_spawns_cmd_with_correct_args(mock_proc):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc) as mock_spawn:
         pty = PtySession("sess-1")
-        await pty.start("You are helpful.", "claude-sonnet-4-6", "/tmp")
+        cmd = ["claude", "--system-prompt", "You are helpful.", "--model", "claude-sonnet-4-6"]
+        await pty.start(cmd, "/tmp")
         mock_spawn.assert_called_once()
-        args = mock_spawn.call_args
-        cmd = args[0][0]
-        assert cmd[0] == "claude"
-        assert "--system-prompt" in cmd
-        assert "You are helpful." in cmd
-        assert "--model" in cmd
-        assert "claude-sonnet-4-6" in cmd
+        spawned_cmd = mock_spawn.call_args[0][0]
+        assert spawned_cmd == cmd
         pty.kill()
 
 
 async def test_write_sends_bytes_to_proc(mock_proc):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc):
         pty = PtySession("sess-1")
-        await pty.start("sys", "model", "/tmp")
+        await pty.start(["zsh"], "/tmp")
         pty.write(b"hello")
         mock_proc.write.assert_called_once_with(b"hello")
         pty.kill()
@@ -52,7 +48,7 @@ async def test_write_sends_bytes_to_proc(mock_proc):
 async def test_resize_calls_setwinsize(mock_proc):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc):
         pty = PtySession("sess-1")
-        await pty.start("sys", "model", "/tmp")
+        await pty.start(["zsh"], "/tmp")
         pty.resize(cols=120, rows=40)
         mock_proc.setwinsize.assert_called_once_with(40, 120)
         pty.kill()
@@ -74,7 +70,7 @@ async def test_output_callback_receives_data(mock_proc, mock_select):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc):
         pty = PtySession("sess-1")
         pty.add_output_callback(cb)
-        await pty.start("sys", "model", "/tmp")
+        await pty.start(["zsh"], "/tmp")
         await asyncio.wait_for(done.wait(), timeout=2.0)
         assert b"chunk1" in received
         assert b"chunk2" in received
@@ -84,7 +80,7 @@ async def test_output_callback_receives_data(mock_proc, mock_select):
 async def test_kill_terminates_proc(mock_proc):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc):
         pty = PtySession("sess-1")
-        await pty.start("sys", "model", "/tmp")
+        await pty.start(["zsh"], "/tmp")
         pty.kill()
         mock_proc.terminate.assert_called()
 
@@ -92,7 +88,7 @@ async def test_kill_terminates_proc(mock_proc):
 async def test_start_passes_extra_env(mock_proc):
     with patch("ptyprocess.PtyProcess.spawn", return_value=mock_proc) as mock_spawn:
         pty = PtySession("sess-env")
-        await pty.start("sys", "model", "/tmp", extra_env={"HARNESS_TOKEN": "tok123"})
+        await pty.start(["zsh"], "/tmp", extra_env={"HARNESS_TOKEN": "tok123"})
         call_kwargs = mock_spawn.call_args[1]
         assert call_kwargs.get("env", {}).get("HARNESS_TOKEN") == "tok123"
         pty.kill()

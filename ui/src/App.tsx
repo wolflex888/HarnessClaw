@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { WsClient } from './ws'
-import type { RoleConfig, SessionState, WSIncoming, TaskRecord } from './types'
+import type { RoleConfig, SessionState, WSIncoming, TaskRecord, ToolInfo } from './types'
 import { SessionSidebar } from './components/SessionSidebar'
 import { SessionCreatePanel } from './components/SessionCreatePanel'
 import { SessionCostBar } from './components/SessionCostBar'
@@ -10,6 +10,7 @@ import { TasksTab } from './components/TasksTab'
 import { AgentTab } from './components/AgentTab'
 import { ToolsTab } from './components/ToolsTab'
 import { MemoryTab } from './components/MemoryTab'
+import { AuditTab } from './components/AuditTab'
 
 function emptySessionState(data: {
   session_id: string; role_id: string; working_dir: string; model: string;
@@ -27,6 +28,7 @@ export default function App() {
   const [roles, setRoles] = useState<RoleConfig[]>([])
   const [sessions, setSessions] = useState<Record<string, SessionState>>({})
   const [tasks, setTasks] = useState<Record<string, TaskRecord>>({})
+  const [mcpTools, setMcpTools] = useState<ToolInfo[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('work')
@@ -37,6 +39,7 @@ export default function App() {
   // Load roles + sessions from REST
   useEffect(() => {
     fetch('/api/roles').then(r => r.json()).then(setRoles).catch(console.error)
+    fetch('/api/mcp/tools').then(r => r.json()).then(setMcpTools).catch(console.error)
     fetch('/api/sessions').then(r => r.json()).then((grouped: Record<string, Array<{
       session_id: string; role_id: string; working_dir: string; model: string;
       name: string; status: 'idle' | 'running' | 'killed';
@@ -194,8 +197,9 @@ export default function App() {
                     />
                   )}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}
-                  {tab === 'tools' && <ToolsTab tools={activeSession.tools} />}
+                  {tab === 'tools' && <ToolsTab tools={mcpTools} />}
                   {tab === 'memory' && <MemoryTab />}
+                  {tab === 'audit' && <AuditTab />}
                 </>
               )}
             </TabPanel>

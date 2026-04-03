@@ -44,7 +44,11 @@ class GatewayMCP:
         try:
             subject, scopes = self._tokens.validate(token)
         except AuthError as e:
-            raise AuthError(str(e))
+            self._audit.log(AuditEvent(
+                subject="unknown", operation=operation, resource="",
+                outcome="error", details={"reason": str(e)},
+            ))
+            raise
         decision = self._policy.check(subject=subject, scopes=scopes, operation=operation)
         if not decision.allowed:
             self._audit.log(AuditEvent(
@@ -94,9 +98,14 @@ class GatewayMCP:
                 outcome="error", details={"error": str(e)},
             ))
             raise
+        task = self._broker.get_task(task_id)
         self._audit.log(AuditEvent(
             subject=subject, operation="agent.delegate", resource=task_id,
-            outcome="allowed", details={"caps": caps, "callback": callback},
+            outcome="allowed", details={
+                "caps": caps,
+                "callback": callback,
+                "delegated_to": task.delegated_to if task else None,
+            },
         ))
         return {"task_id": task_id}
 
@@ -104,7 +113,15 @@ class GatewayMCP:
         subject = self._auth(token, "agent:delegate")
         task = self._broker.get_task(task_id)
         if task is None:
+            self._audit.log(AuditEvent(
+                subject=subject, operation="agent.status", resource=task_id,
+                outcome="error", details={"reason": "task not found"},
+            ))
             raise KeyError(f"task {task_id!r} not found")
+        self._audit.log(AuditEvent(
+            subject=subject, operation="agent.status", resource=task_id,
+            outcome="allowed", details={"status": task.status, "progress_pct": task.progress_pct},
+        ))
         return task.to_dict()
 
     async def agent_progress(self, token: str, task_id: str, pct: int, msg: str) -> dict[str, Any]:
@@ -121,7 +138,10 @@ class GatewayMCP:
         task = await self._broker.complete_task(task_id, result=result)
         self._audit.log(AuditEvent(
             subject=subject, operation="agent.complete", resource=task_id,
-            outcome="allowed", details={},
+            outcome="allowed", details={
+                "delegated_by": task.delegated_by,
+                "result_type": type(task.result).__name__,
+            },
         ))
         return {"task_id": task_id, "status": "completed"}
 
@@ -139,12 +159,21 @@ class GatewayMCP:
     # --- Memory tools ---
 
     async def memory_namespaces(self, token: str) -> list[str]:
-        self._auth(token, "memory:read")
-        return await self._memory.namespaces()
+        subject = self._auth(token, "memory:read")
+        namespaces = await self._memory.namespaces()
+        self._audit.log(AuditEvent(
+            subject=subject, operation="memory.namespaces", resource="",
+            outcome="allowed", details={"count": len(namespaces)},
+        ))
+        return namespaces
 
     async def memory_list(self, token: str, namespace: str) -> list[dict[str, Any]]:
-        self._auth(token, "memory:read")
+        subject = self._auth(token, "memory:read")
         entries = await self._memory.list(namespace)
+        self._audit.log(AuditEvent(
+            subject=subject, operation="memory.list", resource=namespace,
+            outcome="allowed", details={"count": len(entries)},
+        ))
         return [
             {"key": e.key, "summary": e.summary, "tags": e.tags,
              "size_bytes": e.size_bytes, "updated_at": e.updated_at}
@@ -152,18 +181,30 @@ class GatewayMCP:
         ]
 
     async def memory_get(self, token: str, namespace: str, key: str) -> dict[str, Any]:
-        self._auth(token, "memory:read")
+        subject = self._auth(token, "memory:read")
         entry = await self._memory.get(namespace, key)
         if entry is None:
+            self._audit.log(AuditEvent(
+                subject=subject, operation="memory.get", resource=f"{namespace}/{key}",
+                outcome="error", details={"reason": "not found"},
+            ))
             raise KeyError(f"{namespace}/{key} not found")
+        self._audit.log(AuditEvent(
+            subject=subject, operation="memory.get", resource=f"{namespace}/{key}",
+            outcome="allowed", details={"size_bytes": entry.size_bytes},
+        ))
         return {
             "namespace": entry.namespace, "key": entry.key, "value": entry.value,
             "summary": entry.summary, "tags": entry.tags,
         }
 
     async def memory_search(self, token: str, namespace: str, query: str) -> list[dict[str, Any]]:
-        self._auth(token, "memory:read")
+        subject = self._auth(token, "memory:read")
         entries = await self._memory.search(namespace, query)
+        self._audit.log(AuditEvent(
+            subject=subject, operation="memory.search", resource=namespace,
+            outcome="allowed", details={"query": query, "hits": len(entries)},
+        ))
         return [
             {"key": e.key, "summary": e.summary, "tags": e.tags, "size_bytes": e.size_bytes}
             for e in entries
@@ -181,10 +222,11 @@ class GatewayMCP:
 
     async def memory_delete(self, token: str, namespace: str, key: str) -> dict[str, Any]:
         subject = self._auth(token, "memory:write")
+        entry = await self._memory.get(namespace, key)
         await self._memory.delete(namespace, key)
         self._audit.log(AuditEvent(
             subject=subject, operation="memory.delete", resource=f"{namespace}/{key}",
-            outcome="allowed", details={},
+            outcome="allowed", details={"size_bytes": entry.size_bytes if entry else None},
         ))
         return {"deleted": True}
 
@@ -192,7 +234,15 @@ class GatewayMCP:
         subject = self._auth(token, "memory:write")
         entry = await self._memory.get(namespace, key)
         if entry is None:
+            self._audit.log(AuditEvent(
+                subject=subject, operation="memory.tag", resource=f"{namespace}/{key}",
+                outcome="error", details={"reason": "not found"},
+            ))
             raise KeyError(f"{namespace}/{key} not found")
         merged_tags = list(set(entry.tags) | set(tags))
         await self._memory.set(namespace, key, entry.value, summary=entry.summary, tags=merged_tags)
+        self._audit.log(AuditEvent(
+            subject=subject, operation="memory.tag", resource=f"{namespace}/{key}",
+            outcome="allowed", details={"tags_added": tags, "tags_total": merged_tags},
+        ))
         return {"namespace": namespace, "key": key, "tags": merged_tags}

@@ -94,15 +94,23 @@ class JobRunner:
             _logger.error("start_session: role %r not found for session %s", session.role_id, session_id)
             return
 
-        _logger.info("Starting PTY session %s (role=%s)", session_id, session.role_id)
+        _logger.info("Starting PTY session %s (role=%s, provider=%s)", session_id, session.role_id, role.provider)
 
-        # Issue token and write MCP config
+        is_terminal = role.provider == "terminal"
+
+        # Issue token and write MCP config (agent sessions only)
         extra_env: dict[str, str] = {}
-        if self._token_store is not None:
+        if not is_terminal and self._token_store is not None:
             token = self._token_store.issue(session_id, role.scopes)
             self._session_tokens[session_id] = token
             extra_env["HARNESS_TOKEN"] = token
             self._write_mcp_config(session.working_dir, token)
+
+        # Build command
+        if is_terminal:
+            cmd = [os.environ.get("SHELL", "/bin/zsh")]
+        else:
+            cmd = ["claude", "--system-prompt", role.system_prompt, "--model", role.model]
 
         pty = PtySession(session_id)
 
@@ -114,12 +122,11 @@ class JobRunner:
             })
 
         pty.add_output_callback(on_output)
-        await pty.start(role.system_prompt, role.model, session.working_dir,
-                        extra_env=extra_env if extra_env else None)
+        await pty.start(cmd, session.working_dir, extra_env=extra_env if extra_env else None)
         self._pty_sessions[session_id] = pty
 
-        # Register in capability registry
-        if self._connector is not None:
+        # Register in capability registry (agent sessions only)
+        if not is_terminal and self._connector is not None:
             from harness_claw.gateway.capability import AgentAdvertisement
             await self._connector.register(AgentAdvertisement(
                 session_id=session_id,
@@ -130,12 +137,12 @@ class JobRunner:
                 connector="local",
             ))
 
-        # Register write callback with dispatcher
-        if self._dispatcher is not None:
+        # Register write callback with dispatcher (agent sessions only)
+        if not is_terminal and self._dispatcher is not None:
             self._dispatcher.register_writer(session_id, pty.write)
 
-        # Register callback handler for task notifications into this agent's PTY
-        if self._broker is not None and self._pty_callback_handler_factory is not None:
+        # Register callback handler for task notifications (agent sessions only)
+        if not is_terminal and self._broker is not None and self._pty_callback_handler_factory is not None:
             handler = self._pty_callback_handler_factory(session_id)
             self._broker.register_callback_handler(session_id, handler)
 
@@ -146,23 +153,25 @@ class JobRunner:
             "status": "running", "name": session.name,
         })
 
-        async def on_cost_update(sid: str, cost: float, input_tokens: int, output_tokens: int) -> None:
-            s = self._store.get(sid)
-            if s:
-                s.input_tokens = input_tokens
-                s.output_tokens = output_tokens
-                self._store.save(s)
-            await self._broadcast({
-                "type": "cost_update",
-                "session_id": sid,
-                "cost_usd": cost,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-            })
+        # Cost polling (agent sessions only)
+        if not is_terminal:
+            async def on_cost_update(sid: str, cost: float, input_tokens: int, output_tokens: int) -> None:
+                s = self._store.get(sid)
+                if s:
+                    s.input_tokens = input_tokens
+                    s.output_tokens = output_tokens
+                    self._store.save(s)
+                await self._broadcast({
+                    "type": "cost_update",
+                    "session_id": sid,
+                    "cost_usd": cost,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                })
 
-        poller = CostPoller(session_id, session.working_dir, on_cost_update)
-        poller.start()
-        self._cost_pollers[session_id] = poller
+            poller = CostPoller(session_id, session.working_dir, on_cost_update)
+            poller.start()
+            self._cost_pollers[session_id] = poller
 
     def write(self, session_id: str, data: bytes) -> None:
         pty = self._pty_sessions.get(session_id)
