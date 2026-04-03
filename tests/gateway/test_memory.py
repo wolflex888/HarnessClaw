@@ -110,3 +110,16 @@ async def test_set_updates_embedding_on_overwrite(store):
         "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
     ).fetchone()
     assert row1["embedding"] != row2["embedding"]
+
+
+async def test_delete_removes_embedding_vector(store):
+    await store.set("ns", "k", "some value", summary=None, tags=[])
+    row = store._conn.execute(
+        "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
+    ).fetchone()
+    assert row is not None
+    await store.delete("ns", "k")
+    row = store._conn.execute(
+        "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
+    ).fetchone()
+    assert row is None
