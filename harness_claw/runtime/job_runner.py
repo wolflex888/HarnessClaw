@@ -59,6 +59,28 @@ class JobRunner:
         for send in list(self._senders):
             await _call_send(send, msg)
 
+    def _write_mcp_config(self, cwd: str, token: str) -> None:
+        """Write .claude/settings.json so an externally-run claude picks up our MCP server."""
+        cwd_expanded = os.path.expanduser(cwd)
+        claude_dir = Path(cwd_expanded) / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = claude_dir / "settings.json"
+
+        existing: dict[str, Any] = {}
+        if settings_path.exists():
+            try:
+                existing = json.loads(settings_path.read_text())
+            except Exception:
+                pass
+
+        mcp_servers = existing.get("mcpServers", {})
+        mcp_servers["harnessclaw"] = {
+            "type": "sse",
+            "url": f"{self._mcp_base_url}/mcp/sse?token={token}",
+        }
+        existing["mcpServers"] = mcp_servers
+        settings_path.write_text(json.dumps(existing, indent=2))
+
     def _mcp_config_arg(self, token: str) -> list[str]:
         """Build --mcp-config flag for the claude subprocess.
 
