@@ -191,6 +191,12 @@ class Broker:
         self._listeners: list[Any] = []
         self._callback_handlers: dict[str, Any] = {}  # session_id -> handler
         self._callback_subs: dict[str, list[Any]] = {}  # task_id -> [Subscription]
+        self.scheduler = Scheduler(
+            connectors=connectors,
+            dispatcher=dispatcher,
+            store=self._store,
+            notify_fn=self._notify,
+        )
 
     def add_listener(self, fn: Any) -> None:
         self._listeners.append(fn)
@@ -218,28 +224,32 @@ class Broker:
         instructions: str,
         context: dict[str, Any] | None = None,
         callback: bool = False,
+        priority: int = 2,
     ) -> str:
         candidates: list[AgentAdvertisement] = []
         for connector in self._connectors:
             candidates.extend(await connector.query(caps))
 
-        if not candidates:
-            raise ValueError(f"no agent found matching caps {caps}")
-
-        agent = candidates[0]
-
         task = Task(
             task_id=str(uuid.uuid4()),
             delegated_by=delegated_by,
-            delegated_to=agent.session_id,
+            delegated_to="",
             instructions=instructions,
             caps_requested=caps,
             context=context,
-            status="running",
+            status="queued",
             callback=callback,
+            priority=priority,
         )
-        self._store.save(task)
-        await self._dispatcher.dispatch(task, agent)
+
+        if candidates:
+            agent = candidates[0]
+            task.delegated_to = agent.session_id
+            task.status = "running"
+            self._store.save(task)
+            await self._dispatcher.dispatch(task, agent)
+        else:
+            self.scheduler.push(task)
 
         if callback and self._event_bus is not None:
             handler = self._callback_handlers.get(delegated_by)
@@ -278,6 +288,10 @@ class Broker:
         task.progress_pct = 100
         task.result = result
         self._store.save(task)
+        try:
+            asyncio.create_task(self.scheduler.drain())
+        except RuntimeError:
+            pass
         if self._event_bus is not None:
             await self._event_bus.publish(
                 f"task:{task_id}:completed",
@@ -299,6 +313,10 @@ class Broker:
         task.status = "failed"
         task.result = reason
         self._store.save(task)
+        try:
+            asyncio.create_task(self.scheduler.drain())
+        except RuntimeError:
+            pass
         if self._event_bus is not None:
             await self._event_bus.publish(
                 f"task:{task_id}:failed",

@@ -34,13 +34,15 @@ async def test_delegate_creates_task():
     dispatcher.dispatch.assert_called_once()
 
 
-async def test_delegate_raises_when_no_agent_matches():
+async def test_delegate_queues_when_no_agent_matches():
     conn = LocalConnector()
     dispatcher = AsyncMock()
     broker = Broker(connectors=[conn], dispatcher=dispatcher)
 
-    with pytest.raises(ValueError, match="no agent"):
-        await broker.delegate("orch-1", caps=["nonexistent-cap"], instructions="do it")
+    task_id = await broker.delegate("orch-1", caps=["nonexistent-cap"], instructions="do it")
+    task = broker.get_task(task_id)
+    assert task.status == "queued"
+    dispatcher.dispatch.assert_not_called()
 
 
 async def test_update_progress():
@@ -371,3 +373,67 @@ async def test_scheduler_drain_retries_on_dispatch_failure():
 
     # Task should still be in queue (dispatch failed)
     assert len(scheduler._queue) == 1
+
+
+# --- Task 3: Wire Scheduler into Broker tests ---
+
+import asyncio
+
+
+async def test_delegate_queues_when_no_agent_available():
+    conn = LocalConnector()  # no agents
+    dispatcher = AsyncMock()
+    broker = Broker(connectors=[conn], dispatcher=dispatcher)
+
+    task_id = await broker.delegate(
+        delegated_by="orch-1",
+        caps=["python"],
+        instructions="do it",
+    )
+    task = broker.get_task(task_id)
+    assert task is not None
+    assert task.status == "queued"
+    dispatcher.dispatch.assert_not_called()
+
+
+async def test_delegate_no_longer_raises_on_no_agent():
+    conn = LocalConnector()
+    dispatcher = AsyncMock()
+    broker = Broker(connectors=[conn], dispatcher=dispatcher)
+
+    # Should not raise
+    task_id = await broker.delegate("orch-1", caps=["nonexistent-cap"], instructions="do it")
+    assert task_id is not None
+
+
+async def test_delegate_accepts_priority_param():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    broker = Broker(connectors=[conn], dispatcher=dispatcher)
+
+    task_id = await broker.delegate("orch-1", ["python"], "do it", priority=1)
+    task = broker.get_task(task_id)
+    assert task.priority == 1
+
+
+async def test_complete_task_triggers_drain():
+    conn2 = LocalConnector()  # fresh connector with no agents
+    broker2 = Broker(connectors=[conn2], dispatcher=AsyncMock())
+    queued_id = await broker2.delegate("orch-1", ["python"], "queued task")
+    assert broker2.get_task(queued_id).status == "queued"
+
+    # Now register an agent and complete a dummy task to trigger drain
+    await conn2.register(make_agent("s2", ["python"]))
+    dummy_task = Task(
+        task_id="dummy", delegated_by="orch", delegated_to="s2",
+        instructions="dummy", caps_requested=["python"], status="running",
+    )
+    broker2._store.save(dummy_task)
+    await broker2.complete_task("dummy", result="done")
+
+    # Give the event loop a chance to process the drain task
+    await asyncio.sleep(0)
+
+    # drain should have dispatched the queued task
+    assert broker2.get_task(queued_id).status == "running"
