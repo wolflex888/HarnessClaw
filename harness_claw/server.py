@@ -15,6 +15,7 @@ from harness_claw.gateway.broker import Broker, LocalDispatcher
 from harness_claw.gateway.event_bus import LocalEventBus
 from harness_claw.gateway.capability import LocalConnector, GatewayConnector
 from harness_claw.gateway.memory import SqliteMemoryStore
+from harness_claw.gateway.task_store import SqliteTaskStore
 from harness_claw.gateway.mcp_server import GatewayMCP
 from harness_claw.gateway.policy import LocalPolicyEngine
 from harness_claw.role_registry import RoleRegistry
@@ -29,6 +30,7 @@ _agents_yaml = _root / "agents.yaml"
 _sessions_json = _root / "sessions.json"
 _audit_jsonl = _root / "audit.jsonl"
 _memory_db = _root / "memory.db"
+_tasks_db = _root / "tasks.db"
 
 # --- Shared state ---
 registry = RoleRegistry(_agents_yaml)
@@ -44,7 +46,8 @@ gateway_connector = GatewayConnector(
 )
 dispatcher = LocalDispatcher()
 event_bus = LocalEventBus()
-broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus)
+task_store = SqliteTaskStore(_tasks_db)
+broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
 memory = SqliteMemoryStore(_memory_db)
 audit = AuditLogger(_audit_jsonl)
 
@@ -74,6 +77,9 @@ app = FastAPI(title="HarnessClaw Gateway")
 
 @app.on_event("startup")
 async def startup() -> None:
+    task_store.expire(cfg.task_retention_days)
+    task_store.mark_stale_as_failed()
+
     # Wire broker task events into WebSocket broadcast
     async def on_task_event(event: str, task_dict: dict[str, Any]) -> None:
         await runner._broadcast({"type": event, "task": task_dict})
@@ -181,6 +187,28 @@ async def deregister_external_agent(session_id: str) -> None:
 app.include_router(sessions_api.make_router(registry, store, runner))
 app.include_router(roles_api.make_router(registry))
 app.include_router(ws_api.make_router(runner, store))
+
+
+@app.get("/api/tasks")
+def list_tasks_endpoint() -> list[dict[str, Any]]:
+    return [t.to_dict() for t in broker.list_tasks()]
+
+
+@app.post("/api/tasks/{task_id}/retry")
+async def retry_task(task_id: str) -> dict[str, Any]:
+    task = broker.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.status != "failed":
+        raise HTTPException(status_code=400, detail=f"task status is {task.status!r}, not 'failed'")
+    new_task_id = await broker.delegate(
+        delegated_by=task.delegated_by,
+        caps=task.caps_requested,
+        instructions=task.instructions,
+        context=task.context,
+        callback=task.callback,
+    )
+    return {"task_id": new_task_id}
 
 
 # Audit log endpoint
