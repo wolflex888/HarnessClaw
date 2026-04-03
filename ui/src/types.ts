@@ -67,7 +67,7 @@ export type WSIncoming =
   | { type: 'task.updated'; task: TaskRecord }
   | { type: 'task.completed'; task: TaskRecord }
   | { type: 'task.failed'; task: TaskRecord }
-  | { type: 'workflow.started'; run_id: string; workflow_id: string; step_id: string }
+  | { type: 'workflow.started'; run_id: string; workflow_id: string; step_id: string; input: string; initiated_by: string }
   | { type: 'workflow.step'; run_id: string; step_id: string; status: 'completed' | 'failed'; result: unknown }
   | { type: 'workflow.completed'; run_id: string }
   | { type: 'workflow.failed'; run_id: string; reason: string }

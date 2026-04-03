@@ -214,7 +214,7 @@ class WorkflowEngine:
             instructions=instructions,
         )
         await self._subscribe_step(run_id=run_id, step_id=defn.first_step.id, task_id=task_id)
-        await self._broadcast({"type": "workflow.started", "run_id": run_id, "workflow_id": workflow_id, "step_id": defn.first_step.id})
+        await self._broadcast({"type": "workflow.started", "run_id": run_id, "workflow_id": workflow_id, "step_id": defn.first_step.id, "input": input, "initiated_by": initiated_by})
         return run_id
 
     def get_run(self, run_id: str) -> WorkflowRun | None:
@@ -307,8 +307,9 @@ class WorkflowEngine:
                 result = self._broadcast_fn(payload)
                 if hasattr(result, "__await__"):
                     await result
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("workflow broadcast error: %s", e)
 
 
 class _InMemoryRunStore:
