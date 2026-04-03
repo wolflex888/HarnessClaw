@@ -208,7 +208,7 @@ class SqliteMemoryStore:
                 similarity = float(np.dot(query_vec, stored_vec))
                 # Vectors are normalized, so dot product = cosine similarity (range -1 to 1)
                 # Clamp to 0–1 for scoring
-                similarity = max(0.0, similarity)
+                similarity = float(np.clip(similarity, 0.0, 1.0))
                 key = row["key"]
                 scores[key] = scores.get(key, 0.0) + vec_weight * similarity
 
