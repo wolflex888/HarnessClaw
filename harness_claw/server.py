@@ -90,7 +90,11 @@ app = FastAPI(title="HarnessClaw Gateway")
 @app.on_event("startup")
 async def startup() -> None:
     task_store.expire(cfg.task_retention_days)
-    task_store.mark_stale_as_failed()
+
+    # Recover interrupted tasks (queued + running) into the scheduler
+    interrupted = task_store.get_interrupted()
+    broker.scheduler.recover(interrupted)
+    task_store.mark_interrupted_as_queued()
 
     # Wire broker task events into WebSocket broadcast
     async def on_task_event(event: str, task_dict: dict[str, Any]) -> None:
@@ -125,6 +129,10 @@ async def startup() -> None:
     for session in store.all():
         if session.status != "killed":
             await runner.start_session(session)
+
+    # Start scheduler poll loop and do an initial drain
+    await broker.scheduler.start_poll_loop()
+    await broker.scheduler.drain()
 
 
 def _token_from_request(request: Request) -> str:
@@ -343,6 +351,7 @@ _MCP_TOOLS = [
             "instructions": {"type": "string"},
             "context": {"type": "object"},
             "callback": {"type": "boolean"},
+            "priority": {"type": "integer", "description": "1=high, 2=normal (default), 3=low"},
         }, "required": ["caps", "instructions"]}),
     mcp_types.Tool(name="agent.status", description="Check status of a delegated task",
         inputSchema={"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]}),

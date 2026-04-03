@@ -84,28 +84,24 @@ class GatewayMCP:
         instructions: str,
         context: dict[str, Any] | None = None,
         callback: bool = False,
+        priority: int = 2,
     ) -> dict[str, Any]:
         subject = self._auth(token, "agent:delegate")
-        try:
-            task_id = await self._broker.delegate(
-                delegated_by=subject,
-                caps=caps,
-                instructions=instructions,
-                context=context,
-                callback=callback,
-            )
-        except ValueError as e:
-            self._audit.log(AuditEvent(
-                subject=subject, operation="agent.delegate", resource="",
-                outcome="error", details={"error": str(e)},
-            ))
-            raise
+        task_id = await self._broker.delegate(
+            delegated_by=subject,
+            caps=caps,
+            instructions=instructions,
+            context=context,
+            callback=callback,
+            priority=priority,
+        )
         task = self._broker.get_task(task_id)
         self._audit.log(AuditEvent(
             subject=subject, operation="agent.delegate", resource=task_id,
             outcome="allowed", details={
                 "caps": caps,
                 "callback": callback,
+                "priority": priority,
                 "delegated_to": task.delegated_to if task else None,
             },
         ))
