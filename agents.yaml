@@ -198,3 +198,34 @@ roles:
     max_tokens: 8192
     scopes: [agent:list, memory:read]
     caps: [code-review, pr-review]
+
+workflows:
+  code_review_cycle:
+    name: "Code Review Cycle"
+    steps:
+      - id: write
+        caps: [python, typescript]
+        instructions: "{{input}}"
+        on_success: review
+        on_failure: stop
+
+      - id: review
+        caps: [code-review]
+        instructions: |
+          Review the following code change and return your verdict:
+
+          {{prev.result}}
+        on_success: stop
+        on_failure: fix
+
+      - id: fix
+        caps: [python, typescript]
+        instructions: |
+          Fix the issues found in review:
+
+          {{prev.result}}
+
+          Original task:
+          {{steps.write.result}}
+        on_success: review
+        on_failure: stop
