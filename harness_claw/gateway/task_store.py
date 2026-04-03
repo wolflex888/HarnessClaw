@@ -52,6 +52,8 @@ class TaskStoreProtocol(Protocol):
     def save(self, task: Task) -> None: ...
     def get(self, task_id: str) -> Task | None: ...
     def all(self) -> list[Task]: ...
+    def get_interrupted(self) -> list[Task]: ...
+    def mark_interrupted_as_queued(self) -> int: ...
 
 
 class TaskStore:
@@ -69,6 +71,17 @@ class TaskStore:
 
     def all(self) -> list[Task]:
         return list(self._tasks.values())
+
+    def get_interrupted(self) -> list[Task]:
+        return [t for t in self._tasks.values() if t.status in ("queued", "running")]
+
+    def mark_interrupted_as_queued(self) -> int:
+        count = 0
+        for task in self._tasks.values():
+            if task.status in ("queued", "running"):
+                task.status = "queued"
+                count += 1
+        return count
 
 
 _CREATE_TABLE = """
@@ -204,11 +217,11 @@ class SqliteTaskStore:
         """Set status='queued' for all interrupted tasks. Returns count updated."""
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
-            cursor = conn.execute(
+            count = conn.execute(
                 "UPDATE tasks SET status = 'queued', updated_at = ? WHERE status IN ('queued', 'running')",
                 (now,),
-            )
-        return cursor.rowcount
+            ).rowcount
+        return count
 
     def mark_stale_as_failed(self) -> int:
         """Mark queued/running tasks failed with reason 'server_restart'. Returns count updated."""
