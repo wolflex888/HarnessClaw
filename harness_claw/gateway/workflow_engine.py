@@ -26,6 +26,10 @@ class WorkflowDefinition:
     name: str
     steps: list[WorkflowStep]
 
+    def __post_init__(self) -> None:
+        if not self.steps:
+            raise ValueError(f"workflow {self.id!r} must have at least one step")
+
     def step_by_id(self, step_id: str) -> WorkflowStep | None:
         return next((s for s in self.steps if s.id == step_id), None)
 

@@ -57,3 +57,31 @@ def test_parse_no_workflows_section():
     path = make_yaml({})
     registry = RoleRegistry(path)
     assert registry.workflow_definitions == {}
+
+
+def test_workflow_definition_to_dict():
+    steps = [
+        WorkflowStep(id="write", caps=["code"], instructions="{{input}}", on_success="stop", on_failure="stop"),
+    ]
+    d = WorkflowDefinition(id="wf1", name="Test WF", steps=steps)
+    result = d.to_dict()
+    assert result["id"] == "wf1"
+    assert result["name"] == "Test WF"
+    assert len(result["steps"]) == 1
+    assert result["steps"][0]["id"] == "write"
+    assert result["steps"][0]["caps"] == ["code"]
+    assert result["steps"][0]["on_success"] == "stop"
+
+
+def test_workflow_definition_first_step():
+    steps = [
+        WorkflowStep(id="write", caps=["code"], instructions="{{input}}", on_success="stop", on_failure="stop"),
+        WorkflowStep(id="review", caps=["code_review"], instructions="review", on_success="stop", on_failure="stop"),
+    ]
+    d = WorkflowDefinition(id="wf1", name="Test WF", steps=steps)
+    assert d.first_step.id == "write"
+
+
+def test_workflow_definition_empty_steps_raises():
+    with pytest.raises(ValueError, match="at least one step"):
+        WorkflowDefinition(id="bad", name="Bad WF", steps=[])
