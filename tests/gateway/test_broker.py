@@ -245,7 +245,6 @@ async def test_task_persists_across_broker_instances(tmp_path):
 
 # --- Task 2: Scheduler tests ---
 
-import heapq
 from harness_claw.gateway.broker import Scheduler
 
 

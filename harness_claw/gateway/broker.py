@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import logging
 import uuid
+
+_logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -131,19 +134,17 @@ class Scheduler:
 
             try:
                 await self._dispatcher.dispatch(dispatch_task, agent)
-                task.status = "running"
-                task.delegated_to = agent.session_id
-                self._store.save(task)
+                self._store.save(dispatch_task)
                 dispatched.add(task_id)
                 used_agents.add(agent.session_id)
                 del self._tasks[task_id]
                 if self._notify_fn is not None:
                     try:
-                        asyncio.create_task(self._notify_fn("task.updated", task))
+                        asyncio.create_task(self._notify_fn("task.updated", dispatch_task))
                     except RuntimeError:
                         pass
-            except Exception:
-                pass  # dispatch failed — leave in queue for next drain
+            except Exception as exc:
+                _logger.warning("Scheduler: dispatch failed for task %s, will retry: %s", task_id, exc)
 
         if dispatched:
             self._queue = [
@@ -153,6 +154,8 @@ class Scheduler:
 
     async def start_poll_loop(self) -> None:
         """Start background asyncio task that calls drain() every poll_interval seconds."""
+        if self._poll_task is not None:
+            return
         async def _loop() -> None:
             while True:
                 await asyncio.sleep(self._poll_interval)
