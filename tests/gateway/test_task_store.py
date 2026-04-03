@@ -108,3 +108,48 @@ def test_persists_across_instances(tmp_path):
     store1.save(make_task(task_id="persistent"))
     store2 = SqliteTaskStore(db_path)
     assert store2.get("persistent") is not None
+
+
+def test_task_priority_default():
+    task = make_task()
+    assert task.priority == 2
+    assert task.resume is False
+
+
+def test_task_priority_in_to_dict():
+    task = make_task(priority=1, resume=True)
+    d = task.to_dict()
+    assert d["priority"] == 1
+    assert d["resume"] is True
+
+
+def test_sqlite_roundtrip_priority_and_resume(tmp_path):
+    store = SqliteTaskStore(tmp_path / "tasks.db")
+    task = make_task(task_id="p1", priority=1, resume=True)
+    store.save(task)
+    loaded = store.get("p1")
+    assert loaded.priority == 1
+    assert loaded.resume is True
+
+
+def test_get_interrupted_returns_queued_and_running(tmp_path):
+    store = SqliteTaskStore(tmp_path / "tasks.db")
+    store.save(make_task(task_id="q1", status="queued"))
+    store.save(make_task(task_id="r1", status="running"))
+    store.save(make_task(task_id="c1", status="completed"))
+    store.save(make_task(task_id="f1", status="failed"))
+    results = store.get_interrupted()
+    ids = {t.task_id for t in results}
+    assert ids == {"q1", "r1"}
+
+
+def test_mark_interrupted_as_queued(tmp_path):
+    store = SqliteTaskStore(tmp_path / "tasks.db")
+    store.save(make_task(task_id="q1", status="queued"))
+    store.save(make_task(task_id="r1", status="running"))
+    store.save(make_task(task_id="c1", status="completed"))
+    count = store.mark_interrupted_as_queued()
+    assert count == 2
+    assert store.get("q1").status == "queued"
+    assert store.get("r1").status == "queued"
+    assert store.get("c1").status == "completed"  # unchanged

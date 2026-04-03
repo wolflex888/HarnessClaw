@@ -23,6 +23,8 @@ class Task:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     callback: bool = False
+    priority: int = 2
+    resume: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +41,8 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "callback": self.callback,
+            "priority": self.priority,
+            "resume": self.resume,
         }
 
 
@@ -81,9 +85,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     result         TEXT,
     callback       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL
+    updated_at     TEXT NOT NULL,
+    priority       INTEGER NOT NULL DEFAULT 2,
+    resume         INTEGER NOT NULL DEFAULT 0
 )
 """
+
+_MIGRATE_SQL = [
+    "ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 2",
+    "ALTER TABLE tasks ADD COLUMN resume   INTEGER NOT NULL DEFAULT 0",
+]
 
 
 def _row_to_task(row: sqlite3.Row) -> Task:
@@ -96,6 +107,7 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         except (json.JSONDecodeError, TypeError):
             result = result_raw
 
+    keys = row.keys()
     return Task(
         task_id=row["task_id"],
         delegated_by=row["delegated_by"],
@@ -110,6 +122,8 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         callback=bool(row["callback"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        priority=row["priority"] if "priority" in keys else 2,
+        resume=bool(row["resume"]) if "resume" in keys else False,
     )
 
 
@@ -121,6 +135,11 @@ class SqliteTaskStore:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE)
+            for sql in _MIGRATE_SQL:
+                try:
+                    conn.execute(sql)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path)
@@ -136,15 +155,17 @@ class SqliteTaskStore:
                 INSERT INTO tasks
                     (task_id, delegated_by, delegated_to, instructions, caps_requested,
                      context, status, progress_pct, progress_msg, result, callback,
-                     created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     created_at, updated_at, priority, resume)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     status       = excluded.status,
                     progress_pct = excluded.progress_pct,
                     progress_msg = excluded.progress_msg,
                     result       = excluded.result,
                     callback     = excluded.callback,
-                    updated_at   = excluded.updated_at
+                    updated_at   = excluded.updated_at,
+                    priority     = excluded.priority,
+                    resume       = excluded.resume
                 """,
                 (
                     task.task_id, task.delegated_by, task.delegated_to, task.instructions,
@@ -153,6 +174,7 @@ class SqliteTaskStore:
                     task.status, task.progress_pct, task.progress_msg,
                     result_json, int(task.callback),
                     task.created_at, task.updated_at,
+                    task.priority, int(task.resume),
                 ),
             )
 
@@ -169,6 +191,24 @@ class SqliteTaskStore:
                 "SELECT * FROM tasks ORDER BY created_at ASC"
             ).fetchall()
         return [_row_to_task(r) for r in rows]
+
+    def get_interrupted(self) -> list[Task]:
+        """Return all tasks with status in ('queued', 'running')."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status IN ('queued', 'running') ORDER BY priority ASC, created_at ASC"
+            ).fetchall()
+        return [_row_to_task(r) for r in rows]
+
+    def mark_interrupted_as_queued(self) -> int:
+        """Set status='queued' for all interrupted tasks. Returns count updated."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE tasks SET status = 'queued', updated_at = ? WHERE status IN ('queued', 'running')",
+                (now,),
+            )
+        return cursor.rowcount
 
     def mark_stale_as_failed(self) -> int:
         """Mark queued/running tasks failed with reason 'server_restart'. Returns count updated."""
