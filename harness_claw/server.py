@@ -5,9 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from mcp.server.sse import SseServerTransport
+from mcp.server.lowlevel.server import Server as MCPServer
+import mcp.types as mcp_types
 
 from harness_claw.gateway.audit import AuditLogger
 from harness_claw.gateway.auth import TokenStore
@@ -326,6 +329,121 @@ def get_mcp_tools() -> list[dict[str, str]]:
         {"name": "memory.tag", "description": "Add tags to a memory entry"},
         {"name": "workflow.run", "description": "Start a named workflow by ID with an input string; returns run_id"},
     ]
+
+
+# --- MCP SSE endpoint ---
+_sse_transport = SseServerTransport("/mcp/messages/")
+
+_MCP_TOOLS = [
+    mcp_types.Tool(name="agent.list", description="List agents filtered by caps",
+        inputSchema={"type": "object", "properties": {"caps": {"type": "array", "items": {"type": "string"}}}, "required": ["caps"]}),
+    mcp_types.Tool(name="agent.delegate", description="Delegate a task to the best-matched agent; returns task_id",
+        inputSchema={"type": "object", "properties": {
+            "caps": {"type": "array", "items": {"type": "string"}},
+            "instructions": {"type": "string"},
+            "context": {"type": "object"},
+            "callback": {"type": "boolean"},
+        }, "required": ["caps", "instructions"]}),
+    mcp_types.Tool(name="agent.status", description="Check status of a delegated task",
+        inputSchema={"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]}),
+    mcp_types.Tool(name="agent.progress", description="Report progress on the current task",
+        inputSchema={"type": "object", "properties": {
+            "task_id": {"type": "string"}, "pct": {"type": "integer"}, "msg": {"type": "string"},
+        }, "required": ["task_id", "pct", "msg"]}),
+    mcp_types.Tool(name="agent.complete", description="Signal task completion with a result payload",
+        inputSchema={"type": "object", "properties": {
+            "task_id": {"type": "string"}, "result": {},
+        }, "required": ["task_id", "result"]}),
+    mcp_types.Tool(name="agent.spawn", description="Spawn a new agent session with a given role",
+        inputSchema={"type": "object", "properties": {
+            "role_id": {"type": "string"}, "working_dir": {"type": "string"},
+        }, "required": ["role_id", "working_dir"]}),
+    mcp_types.Tool(name="memory.namespaces", description="List all memory namespaces",
+        inputSchema={"type": "object", "properties": {}}),
+    mcp_types.Tool(name="memory.list", description="List keys and metadata within a namespace",
+        inputSchema={"type": "object", "properties": {"namespace": {"type": "string"}}, "required": ["namespace"]}),
+    mcp_types.Tool(name="memory.get", description="Load a specific memory entry",
+        inputSchema={"type": "object", "properties": {
+            "namespace": {"type": "string"}, "key": {"type": "string"},
+        }, "required": ["namespace", "key"]}),
+    mcp_types.Tool(name="memory.search", description="Hybrid FTS5 + semantic search across a namespace",
+        inputSchema={"type": "object", "properties": {
+            "namespace": {"type": "string"}, "query": {"type": "string"},
+        }, "required": ["namespace", "query"]}),
+    mcp_types.Tool(name="memory.set", description="Write a value to a namespace",
+        inputSchema={"type": "object", "properties": {
+            "namespace": {"type": "string"}, "key": {"type": "string"}, "value": {"type": "string"},
+            "summary": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["namespace", "key", "value", "tags"]}),
+    mcp_types.Tool(name="memory.delete", description="Delete a key from a namespace",
+        inputSchema={"type": "object", "properties": {
+            "namespace": {"type": "string"}, "key": {"type": "string"},
+        }, "required": ["namespace", "key"]}),
+    mcp_types.Tool(name="memory.tag", description="Add tags to a memory entry",
+        inputSchema={"type": "object", "properties": {
+            "namespace": {"type": "string"}, "key": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["namespace", "key", "tags"]}),
+    mcp_types.Tool(name="workflow.run", description="Start a named workflow by ID",
+        inputSchema={"type": "object", "properties": {
+            "workflow_id": {"type": "string"}, "input": {"type": "string"},
+        }, "required": ["workflow_id", "input"]}),
+]
+
+
+async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
+    handlers: dict[str, Any] = {
+        "agent.list": lambda a: gateway_mcp.agent_list(token=token, **a),
+        "agent.delegate": lambda a: gateway_mcp.agent_delegate(token=token, **a),
+        "agent.status": lambda a: gateway_mcp.agent_status(token=token, **a),
+        "agent.progress": lambda a: gateway_mcp.agent_progress(token=token, **a),
+        "agent.complete": lambda a: gateway_mcp.agent_complete(token=token, **a),
+        "agent.spawn": lambda a: gateway_mcp.agent_spawn(token=token, **a),
+        "memory.namespaces": lambda a: gateway_mcp.memory_namespaces(token=token),
+        "memory.list": lambda a: gateway_mcp.memory_list(token=token, **a),
+        "memory.get": lambda a: gateway_mcp.memory_get(token=token, **a),
+        "memory.search": lambda a: gateway_mcp.memory_search(token=token, **a),
+        "memory.set": lambda a: gateway_mcp.memory_set(token=token, **a),
+        "memory.delete": lambda a: gateway_mcp.memory_delete(token=token, **a),
+        "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
+        "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
+    }
+    handler = handlers.get(name)
+    if handler is None:
+        raise ValueError(f"unknown tool {name!r}")
+    return await handler(args)
+
+
+def _build_mcp_server(token: str) -> MCPServer:
+    server = MCPServer("harnessclaw")
+
+    @server.list_tools()
+    async def list_tools() -> list[mcp_types.Tool]:
+        return _MCP_TOOLS
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict | None) -> list[mcp_types.TextContent]:
+        try:
+            result = await _dispatch_tool(token, name, arguments or {})
+            return [mcp_types.TextContent(type="text", text=json.dumps(result))]
+        except Exception as e:
+            return [mcp_types.TextContent(type="text", text=f"Error: {e}")]
+
+    return server
+
+
+@app.get("/mcp/sse")
+async def mcp_sse(request: Request) -> Response:
+    token = request.query_params.get("token", "")
+    server = _build_mcp_server(token)
+    async with _sse_transport.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await server.run(streams[0], streams[1], server.create_initialization_options())
+    return Response()
+
+
+app.mount("/mcp/messages/", app=_sse_transport.handle_post_message)
 
 
 # SPA
