@@ -60,13 +60,16 @@ class JobRunner:
             await _call_send(send, msg)
 
     def _write_mcp_config(self, cwd: str, token: str) -> None:
-        """Write .claude/settings.json so claude picks up our MCP server."""
+        """Merge HarnessClaw MCP entry into .claude/settings.local.json.
+
+        Uses settings.local.json (gitignored, user-local) so the project's
+        committed settings.json is never touched.
+        """
         cwd_expanded = os.path.expanduser(cwd)
         claude_dir = Path(cwd_expanded) / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
-        settings_path = claude_dir / "settings.json"
+        settings_path = claude_dir / "settings.local.json"
 
-        # Preserve existing settings if any
         existing: dict[str, Any] = {}
         if settings_path.exists():
             try:
