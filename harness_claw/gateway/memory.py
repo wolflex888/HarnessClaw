@@ -141,20 +141,23 @@ class SqliteMemoryStore:
             "SELECT created_at FROM memory WHERE namespace=? AND key=?", (namespace, key)
         ).fetchone()
         created_at = existing["created_at"] if existing else now
-        self._conn.execute(
-            """INSERT OR REPLACE INTO memory (namespace, key, value, summary, tags, size_bytes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (namespace, key, value, summary, json.dumps(tags), len(value.encode()), created_at, now),
-        )
-        # Embed and store vector
-        embed_text = f"{value} {summary}" if summary else value
-        vec = self._embedder.embed(embed_text)
-        self._conn.execute(
-            """INSERT OR REPLACE INTO memory_vectors (namespace, key, embedding)
-               VALUES (?, ?, ?)""",
-            (namespace, key, self._embedder.to_blob(vec)),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO memory (namespace, key, value, summary, tags, size_bytes, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (namespace, key, value, summary, json.dumps(tags), len(value.encode()), created_at, now),
+            )
+            embed_text = f"{value} {summary}" if summary else value
+            vec = self._embedder.embed(embed_text)
+            self._conn.execute(
+                """INSERT OR REPLACE INTO memory_vectors (namespace, key, embedding)
+                   VALUES (?, ?, ?)""",
+                (namespace, key, self._embedder.to_blob(vec)),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     async def get(self, namespace: str, key: str) -> MemoryEntry | None:
         row = self._conn.execute(
@@ -168,15 +171,60 @@ class SqliteMemoryStore:
         ).fetchall()
         return [self._row_to_entry(r) for r in rows]
 
-    async def search(self, namespace: str, query: str) -> list[MemoryEntry]:
-        rows = self._conn.execute(
-            """SELECT m.* FROM memory m
-               JOIN memory_fts f ON m.rowid = f.rowid
-               WHERE f.memory_fts MATCH ? AND m.namespace = ?
-               ORDER BY rank""",
-            (query, namespace),
+    async def search(self, namespace: str, query: str, top_k: int = 10,
+                     fts_weight: float = 0.4, vec_weight: float = 0.6) -> list[MemoryEntry]:
+        """Hybrid search: merge FTS5 keyword results with vector cosine similarity."""
+        scores: dict[str, float] = {}
+
+        # --- FTS5 keyword search ---
+        try:
+            fts_rows = self._conn.execute(
+                """SELECT m.*, rank FROM memory m
+                   JOIN memory_fts f ON m.rowid = f.rowid
+                   WHERE f.memory_fts MATCH ? AND m.namespace = ?
+                   ORDER BY rank""",
+                (query, namespace),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            fts_rows = []
+        if fts_rows:
+            # FTS5 rank is negative (more negative = better match), normalize to 0–1
+            ranks = [abs(r["rank"]) for r in fts_rows]
+            max_rank = max(ranks) if ranks else 1.0
+            for row, rank in zip(fts_rows, ranks):
+                normalized = rank / max_rank if max_rank > 0 else 0.0
+                scores[row["key"]] = fts_weight * normalized
+
+        # --- Vector cosine similarity search ---
+        vec_rows = self._conn.execute(
+            """SELECT mv.key, mv.embedding FROM memory_vectors mv
+               WHERE mv.namespace = ?""",
+            (namespace,),
         ).fetchall()
-        return [self._row_to_entry(r) for r in rows]
+        if vec_rows:
+            query_vec = self._embedder.embed(query)
+            for row in vec_rows:
+                stored_vec = Embedder.from_blob(row["embedding"])
+                similarity = float(np.dot(query_vec, stored_vec))
+                # Vectors are normalized, so dot product = cosine similarity (range -1 to 1)
+                # Clamp to 0–1 for scoring
+                similarity = max(0.0, similarity)
+                key = row["key"]
+                scores[key] = scores.get(key, 0.0) + vec_weight * similarity
+
+        # --- Merge and rank ---
+        ranked_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:top_k]
+        if not ranked_keys:
+            return []
+
+        # Fetch full entries for the top-k keys
+        placeholders = ",".join("?" for _ in ranked_keys)
+        entry_rows = self._conn.execute(
+            f"SELECT * FROM memory WHERE namespace = ? AND key IN ({placeholders})",
+            (namespace, *ranked_keys),
+        ).fetchall()
+        entries_by_key = {r["key"]: self._row_to_entry(r) for r in entry_rows}
+        return [entries_by_key[k] for k in ranked_keys if k in entries_by_key]
 
     async def delete(self, namespace: str, key: str) -> None:
         self._conn.execute("DELETE FROM memory WHERE namespace=? AND key=?", (namespace, key))

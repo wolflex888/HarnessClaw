@@ -123,3 +123,39 @@ async def test_delete_removes_embedding_vector(store):
         "SELECT embedding FROM memory_vectors WHERE namespace=? AND key=?", ("ns", "k")
     ).fetchone()
     assert row is None
+
+
+async def test_search_finds_semantically_similar_entries(store):
+    """The key test: FTS5 alone would miss this because there's no keyword overlap."""
+    await store.set("ns", "auth-bug", "JWT token validation skips the expiry check",
+                    summary="token expiry bug", tags=["auth"])
+    await store.set("ns", "db-schema", "database uses PostgreSQL with UUID primary keys",
+                    summary="db design", tags=["database"])
+    await store.set("ns", "cake", "how to bake a chocolate cake recipe",
+                    summary="baking", tags=["food"])
+    results = await store.search("ns", "authentication bug")
+    keys = [e.key for e in results]
+    # "auth-bug" should be found even though "authentication bug" doesn't appear in its text
+    assert "auth-bug" in keys
+    # "cake" should not be in results (or ranked very low)
+    if "cake" in keys:
+        assert keys.index("auth-bug") < keys.index("cake")
+
+
+async def test_search_hybrid_returns_fts_and_vector_matches(store):
+    """FTS5 matches (exact keyword) and vector matches (semantic) both appear."""
+    await store.set("ns", "exact-match", "the authentication module handles login",
+                    summary=None, tags=[])
+    await store.set("ns", "semantic-match", "JWT token validation and session management",
+                    summary=None, tags=[])
+    await store.set("ns", "unrelated", "chocolate cake baking instructions",
+                    summary=None, tags=[])
+    results = await store.search("ns", "authentication")
+    keys = [e.key for e in results]
+    assert "exact-match" in keys      # FTS5 hit (keyword "authentication")
+    assert "semantic-match" in keys   # vector hit (semantically related)
+
+
+async def test_search_empty_namespace_returns_empty(store):
+    results = await store.search("empty-ns", "anything")
+    assert results == []
