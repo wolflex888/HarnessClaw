@@ -235,7 +235,7 @@ async def test_task_persists_across_broker_instances(tmp_path):
         instructions="survive the restart",
     )
 
-    # Simulate restart: new Broker instance reusing same store
+    # New Broker with the same store — confirms Broker reads through to store on get_task
     broker2 = Broker(connectors=[conn], dispatcher=AsyncMock(), task_store=store)
     task = broker2.get_task(task_id)
     assert task is not None
