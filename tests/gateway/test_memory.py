@@ -159,3 +159,12 @@ async def test_search_hybrid_returns_fts_and_vector_matches(store):
 async def test_search_empty_namespace_returns_empty(store):
     results = await store.search("empty-ns", "anything")
     assert results == []
+
+
+async def test_search_handles_fts_syntax_error_gracefully(store):
+    """Queries with special chars that break FTS5 should still return vector results."""
+    await store.set("ns", "note", "authentication token validation", summary=None, tags=[])
+    # Parentheses break FTS5 syntax
+    results = await store.search("ns", "auth (token)")
+    # Should not raise, should return vector-only results
+    assert isinstance(results, list)
