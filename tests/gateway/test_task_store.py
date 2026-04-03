@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from harness_claw.gateway.task_store import SqliteTaskStore, Task
 
 
