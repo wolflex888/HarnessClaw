@@ -105,9 +105,9 @@ class GatewayMCP:
         ))
         return {"task_id": task_id, "status": task.status}
 
-    async def agent_complete(self, token: str, task_id: str, result: str) -> dict[str, Any]:
+    async def agent_complete(self, token: str, task_id: str, result: dict[str, Any] | str) -> dict[str, Any]:
         subject = self._auth(token, "agent:report")
-        task = self._broker.complete_task(task_id, result=result)
+        task = await self._broker.complete_task(task_id, result=result)
         self._audit.log(AuditEvent(
             subject=subject, operation="agent.complete", resource=task_id,
             outcome="allowed", details={},
