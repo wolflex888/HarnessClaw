@@ -18,6 +18,7 @@ from harness_claw.gateway.memory import SqliteMemoryStore
 from harness_claw.gateway.task_store import SqliteTaskStore
 from harness_claw.gateway.mcp_server import GatewayMCP
 from harness_claw.gateway.policy import LocalPolicyEngine
+from harness_claw.gateway.workflow_engine import WorkflowEngine
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.runtime.job_runner import JobRunner
 from harness_claw.runtime.session_store import SessionStore
@@ -31,6 +32,7 @@ _sessions_json = _root / "sessions.json"
 _audit_jsonl = _root / "audit.jsonl"
 _memory_db = _root / "memory.db"
 _tasks_db = _root / "tasks.db"
+_workflows_db = _root / "workflows.db"
 
 # --- Shared state ---
 registry = RoleRegistry(_agents_yaml)
@@ -50,6 +52,12 @@ task_store = SqliteTaskStore(_tasks_db)
 broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
 memory = SqliteMemoryStore(_memory_db)
 audit = AuditLogger(_audit_jsonl)
+workflow_engine = WorkflowEngine(
+    definitions=registry.workflow_definitions,
+    broker=broker,
+    event_bus=event_bus,
+    db_path=_workflows_db,
+)
 
 gateway_mcp = GatewayMCP(
     token_store=token_store,
@@ -58,6 +66,7 @@ gateway_mcp = GatewayMCP(
     broker=broker,
     memory=memory,
     audit=audit,
+    workflow_engine=workflow_engine,
 )
 
 runner = JobRunner(
@@ -85,6 +94,11 @@ async def startup() -> None:
         await runner._broadcast({"type": event, "task": task_dict})
 
     broker.add_listener(on_task_event)
+
+    async def _wf_broadcast(msg: dict) -> None:
+        await runner._broadcast(msg)
+
+    workflow_engine._broadcast_fn = _wf_broadcast
 
     import json as _json
 
@@ -141,6 +155,7 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         "memory.set": lambda a: gateway_mcp.memory_set(token=token, **a),
         "memory.delete": lambda a: gateway_mcp.memory_delete(token=token, **a),
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
+        "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
     }
 
     handler = handlers.get(tool)
@@ -214,6 +229,42 @@ async def retry_task(task_id: str) -> dict[str, Any]:
     return {"task_id": new_task_id}
 
 
+class WorkflowRunRequest(BaseModel):
+    input: str
+    initiated_by: str = "dashboard"
+
+
+@app.get("/api/workflows")
+def list_workflows() -> list[dict[str, Any]]:
+    return [d.to_dict() for d in workflow_engine.list_definitions()]
+
+
+@app.post("/api/workflows/{workflow_id}/run", status_code=201)
+async def run_workflow(workflow_id: str, req: WorkflowRunRequest) -> dict[str, Any]:
+    try:
+        run_id = await workflow_engine.start(
+            workflow_id=workflow_id,
+            input=req.input,
+            initiated_by=req.initiated_by,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"run_id": run_id}
+
+
+@app.get("/api/workflows/runs")
+def list_workflow_runs() -> list[dict[str, Any]]:
+    return [r.to_dict() for r in workflow_engine.list_runs()]
+
+
+@app.get("/api/workflows/runs/{run_id}")
+def get_workflow_run(run_id: str) -> dict[str, Any]:
+    run = workflow_engine.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return run.to_dict()
+
+
 # Audit log endpoint
 @app.get("/api/audit")
 def get_audit(limit: int = 100) -> list[dict[str, Any]]:
@@ -273,6 +324,7 @@ def get_mcp_tools() -> list[dict[str, str]]:
         {"name": "memory.set", "description": "Write a value to a namespace"},
         {"name": "memory.delete", "description": "Delete a key from a namespace"},
         {"name": "memory.tag", "description": "Add tags to a memory entry"},
+        {"name": "workflow.run", "description": "Start a named workflow by ID with an input string; returns run_id"},
     ]
 
 

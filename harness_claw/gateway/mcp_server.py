@@ -30,6 +30,7 @@ class GatewayMCP:
         memory: MemoryStore,
         audit: AuditLogger,
         spawn_callback: Any | None = None,
+        workflow_engine: Any | None = None,
     ) -> None:
         self._tokens = token_store
         self._policy = policy
@@ -38,6 +39,7 @@ class GatewayMCP:
         self._memory = memory
         self._audit = audit
         self._spawn_callback = spawn_callback  # async (role_id, working_dir) → session_id
+        self._workflow_engine = workflow_engine
 
     def _auth(self, token: str, operation: str) -> str:
         """Validate token and check scope. Returns subject. Raises on failure."""
@@ -155,6 +157,23 @@ class GatewayMCP:
             outcome="allowed", details={"role_id": role_id},
         ))
         return {"session_id": session_id}
+
+    # --- Workflow tools ---
+
+    async def workflow_run(self, token: str, workflow_id: str, input: str) -> dict[str, Any]:
+        subject = self._auth(token, "agent:delegate")
+        if self._workflow_engine is None:
+            raise RuntimeError("workflow engine not configured")
+        run_id = await self._workflow_engine.start(
+            workflow_id=workflow_id,
+            input=input,
+            initiated_by=subject,
+        )
+        self._audit.log(AuditEvent(
+            subject=subject, operation="workflow.run", resource=workflow_id,
+            outcome="allowed", details={"run_id": run_id},
+        ))
+        return {"run_id": run_id}
 
     # --- Memory tools ---
 
