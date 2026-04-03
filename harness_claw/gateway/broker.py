@@ -2,61 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from harness_claw.gateway.capability import AgentAdvertisement, CapabilityConnector
 from harness_claw.gateway.event_bus import EventBus
-
-
-@dataclass
-class Task:
-    task_id: str
-    delegated_by: str
-    delegated_to: str
-    instructions: str
-    caps_requested: list[str]
-    context: dict[str, Any] | None = None
-    status: str = "queued"       # queued | running | completed | failed
-    progress_pct: int = 0
-    progress_msg: str = ""
-    result: dict[str, Any] | str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    callback: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "delegated_by": self.delegated_by,
-            "delegated_to": self.delegated_to,
-            "instructions": self.instructions,
-            "caps_requested": self.caps_requested,
-            "context": self.context,
-            "status": self.status,
-            "progress_pct": self.progress_pct,
-            "progress_msg": self.progress_msg,
-            "result": self.result,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "callback": self.callback,
-        }
-
-
-class TaskStore:
-    def __init__(self) -> None:
-        self._tasks: dict[str, Task] = {}
-
-    def save(self, task: Task) -> None:
-        task.updated_at = datetime.now(timezone.utc).isoformat()
-        self._tasks[task.task_id] = task
-
-    def get(self, task_id: str) -> Task | None:
-        return self._tasks.get(task_id)
-
-    def all(self) -> list[Task]:
-        return list(self._tasks.values())
+from harness_claw.gateway.task_store import Task, TaskStore
 
 
 class TaskDispatcher(Protocol):
