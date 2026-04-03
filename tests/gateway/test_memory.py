@@ -1,6 +1,6 @@
 from __future__ import annotations
 import pytest
-from harness_claw.gateway.memory import SqliteMemoryStore, MemoryEntry
+from harness_claw.gateway.memory import SqliteMemoryStore, MemoryEntry, Embedder
 
 
 @pytest.fixture
@@ -60,3 +60,30 @@ async def test_set_updates_existing_entry(store):
     entry = await store.get("ns", "k")
     assert entry.value == "updated"
     assert entry.summary == "new summary"
+
+
+def test_embedder_produces_768_dim_vector():
+    embedder = Embedder()
+    vec = embedder.embed("hello world")
+    assert len(vec) == 768
+
+
+def test_embedder_lazy_loads_model():
+    embedder = Embedder()
+    assert embedder._model is None
+    embedder.embed("trigger load")
+    assert embedder._model is not None
+
+
+def test_embedder_similar_texts_have_high_similarity():
+    embedder = Embedder()
+    v1 = embedder.embed("JWT token validation skips expiry check")
+    v2 = embedder.embed("authentication bug in token expiry")
+    v3 = embedder.embed("how to bake chocolate cake")
+    import numpy as np
+    def cosine(a, b):
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    sim_related = cosine(v1, v2)
+    sim_unrelated = cosine(v1, v3)
+    assert sim_related > sim_unrelated
+    assert sim_related > 0.5

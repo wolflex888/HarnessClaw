@@ -7,6 +7,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
+
+
+class Embedder:
+    """Lazy-loading sentence-transformers embedder."""
+
+    MODEL_NAME = "all-mpnet-base-v2"
+    DIMS = 768
+
+    def __init__(self) -> None:
+        self._model = None
+
+    def _load(self) -> None:
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer(self.MODEL_NAME)
+
+    def embed(self, text: str) -> np.ndarray:
+        """Return a normalized embedding vector for the given text."""
+        self._load()
+        vec = self._model.encode(text, normalize_embeddings=True)
+        return vec
+
+    @staticmethod
+    def to_blob(vec: np.ndarray) -> bytes:
+        """Serialize a float32 vector to bytes for SQLite BLOB storage."""
+        return vec.astype(np.float32).tobytes()
+
+    @staticmethod
+    def from_blob(blob: bytes) -> np.ndarray:
+        """Deserialize bytes back to a float32 numpy array."""
+        return np.frombuffer(blob, dtype=np.float32)
+
 
 @dataclass
 class MemoryEntry:
