@@ -167,3 +167,162 @@ class WorkflowRunStore:
             )
             for r in rows
         ]
+
+
+class WorkflowEngine:
+    def __init__(
+        self,
+        definitions: dict[str, WorkflowDefinition],
+        broker: Any,
+        event_bus: Any,
+        broadcast_fn: Callable[[dict[str, Any]], Any] | None = None,
+        db_path: Path | None = None,
+    ) -> None:
+        self._definitions = definitions
+        self._broker = broker
+        self._event_bus = event_bus
+        self._broadcast_fn = broadcast_fn
+        self._store = WorkflowRunStore(db_path) if db_path else _InMemoryRunStore()
+        self._task_subs: dict[str, list[Any]] = {}  # task_id -> [sub_completed, sub_failed]
+
+    # -- Public API --
+
+    async def start(self, workflow_id: str, input: str, initiated_by: str) -> str:
+        defn = self._definitions.get(workflow_id)
+        if defn is None:
+            raise ValueError(f"workflow {workflow_id!r} not found")
+
+        run_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        run = WorkflowRun(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            status="running",
+            current_step_id=defn.first_step.id,
+            step_results={},
+            input=input,
+            initiated_by=initiated_by,
+            created_at=now,
+            updated_at=now,
+        )
+        self._store.save(run)
+
+        instructions = self._render(defn.first_step.instructions, input=input, prev_result=None, step_results={})
+        task_id = await self._broker.delegate(
+            delegated_by=run_id,
+            caps=defn.first_step.caps,
+            instructions=instructions,
+        )
+        await self._subscribe_step(run_id=run_id, step_id=defn.first_step.id, task_id=task_id)
+        await self._broadcast({"type": "workflow.started", "run_id": run_id, "workflow_id": workflow_id, "step_id": defn.first_step.id})
+        return run_id
+
+    def get_run(self, run_id: str) -> WorkflowRun | None:
+        return self._store.get(run_id)
+
+    def list_runs(self) -> list[WorkflowRun]:
+        return self._store.all()
+
+    def list_definitions(self) -> list[WorkflowDefinition]:
+        return list(self._definitions.values())
+
+    # -- Internal --
+
+    def _render(self, template: str, input: str, prev_result: Any, step_results: dict[str, Any]) -> str:
+        result = template
+        result = result.replace("{{input}}", input)
+        prev_str = prev_result if isinstance(prev_result, str) else (json.dumps(prev_result) if prev_result is not None else "")
+        result = result.replace("{{prev.result}}", prev_str)
+        for match in re.finditer(r"\{\{steps\.([\w-]+)\.result\}\}", result):
+            step_id = match.group(1)
+            val = step_results.get(step_id)
+            val_str = val if isinstance(val, str) else (json.dumps(val) if val is not None else "")
+            result = result.replace(match.group(0), val_str)
+        return result
+
+    async def _subscribe_step(self, run_id: str, step_id: str, task_id: str) -> None:
+        async def on_completed(event: Any) -> None:
+            await self._on_step_event(run_id=run_id, step_id=step_id, task_id=task_id, outcome="completed", event=event)
+
+        async def on_failed(event: Any) -> None:
+            await self._on_step_event(run_id=run_id, step_id=step_id, task_id=task_id, outcome="failed", event=event)
+
+        sub_ok = await self._event_bus.subscribe(f"task:{task_id}:completed", on_completed)
+        sub_fail = await self._event_bus.subscribe(f"task:{task_id}:failed", on_failed)
+        self._task_subs[task_id] = [sub_ok, sub_fail]
+
+    async def _on_step_event(self, run_id: str, step_id: str, task_id: str, outcome: str, event: Any) -> None:
+        for sub in self._task_subs.pop(task_id, []):
+            await self._event_bus.unsubscribe(sub)
+
+        run = self._store.get(run_id)
+        if run is None or run.status != "running":
+            return
+
+        defn = self._definitions.get(run.workflow_id)
+        if defn is None:
+            return
+
+        step = defn.step_by_id(step_id)
+        if step is None:
+            return
+
+        result = event.payload.get("task", {}).get("result")
+        run.step_results[step_id] = result
+
+        await self._broadcast({"type": "workflow.step", "run_id": run_id, "step_id": step_id, "status": outcome, "result": result})
+
+        next_step_id = step.on_success if outcome == "completed" else step.on_failure
+
+        if next_step_id == "stop":
+            run.status = "completed" if outcome == "completed" else "failed"
+            self._store.save(run)
+            if outcome == "completed":
+                await self._broadcast({"type": "workflow.completed", "run_id": run_id})
+            else:
+                await self._broadcast({"type": "workflow.failed", "run_id": run_id, "reason": f"step {step_id!r} failed"})
+            return
+
+        next_step = defn.step_by_id(next_step_id)
+        if next_step is None:
+            run.status = "failed"
+            self._store.save(run)
+            await self._broadcast({"type": "workflow.failed", "run_id": run_id, "reason": f"step {next_step_id!r} not found"})
+            return
+
+        run.current_step_id = next_step_id
+        self._store.save(run)
+
+        instructions = self._render(next_step.instructions, input=run.input, prev_result=result, step_results=run.step_results)
+        new_task_id = await self._broker.delegate(
+            delegated_by=run_id,
+            caps=next_step.caps,
+            instructions=instructions,
+        )
+        await self._subscribe_step(run_id=run_id, step_id=next_step_id, task_id=new_task_id)
+
+    async def _broadcast(self, payload: dict[str, Any]) -> None:
+        if self._broadcast_fn is not None:
+            try:
+                result = self._broadcast_fn(payload)
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception:
+                pass
+
+
+class _InMemoryRunStore:
+    """In-memory fallback used in tests when no db_path is provided."""
+
+    def __init__(self) -> None:
+        self._runs: dict[str, WorkflowRun] = {}
+
+    def save(self, run: WorkflowRun) -> None:
+        run.updated_at = datetime.now(timezone.utc).isoformat()
+        self._runs[run.run_id] = run
+
+    def get(self, run_id: str) -> WorkflowRun | None:
+        return self._runs.get(run_id)
+
+    def all(self) -> list[WorkflowRun]:
+        return list(self._runs.values())
