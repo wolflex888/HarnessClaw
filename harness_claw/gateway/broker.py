@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from harness_claw.gateway.capability import AgentAdvertisement, CapabilityConnector
 from harness_claw.gateway.event_bus import EventBus
@@ -39,6 +40,135 @@ class LocalDispatcher:
 
     async def cancel(self, task_id: str) -> None:
         pass  # PTY cancellation handled by kill_session
+
+
+class Scheduler:
+    """Priority queue that holds tasks waiting for an available agent.
+
+    In-memory heapq ordered by (priority, created_at, task_id).
+    SQLite is the source of truth — push() persists before enqueuing.
+    """
+
+    def __init__(
+        self,
+        connectors: list[CapabilityConnector],
+        dispatcher: TaskDispatcher,
+        store: TaskStoreProtocol,
+        notify_fn: Callable | None = None,
+        poll_interval: int = 30,
+    ) -> None:
+        self._connectors = connectors
+        self._dispatcher = dispatcher
+        self._store = store
+        self._notify_fn = notify_fn
+        self._poll_interval = poll_interval
+        self._queue: list[tuple[int, str, str]] = []   # (priority, created_at, task_id)
+        self._tasks: dict[str, Task] = {}               # task_id → Task
+        self._poll_task: asyncio.Task | None = None
+
+    def push(self, task: Task) -> None:
+        """Persist task as queued and enqueue it."""
+        task.status = "queued"
+        self._store.save(task)
+        heapq.heappush(self._queue, (task.priority, task.created_at, task.task_id))
+        self._tasks[task.task_id] = task
+
+    def recover(self, tasks: list[Task]) -> None:
+        """Re-enqueue interrupted tasks on startup.
+        Tasks that were running get resume=True."""
+        for task in tasks:
+            if task.status == "running":
+                task.resume = True
+            heapq.heappush(self._queue, (task.priority, task.created_at, task.task_id))
+            self._tasks[task.task_id] = task
+
+    async def drain(self) -> None:
+        """Dispatch queued tasks to available agents, in priority order.
+        Continues past tasks whose cap set has no available agent."""
+        pending = sorted(self._queue)
+        dispatched: set[str] = set()
+        used_agents: set[str] = set()
+
+        for _, _, task_id in pending:
+            task = self._tasks.get(task_id)
+            if task is None:
+                dispatched.add(task_id)
+                continue
+
+            candidates: list[AgentAdvertisement] = []
+            for connector in self._connectors:
+                candidates.extend(await connector.query(task.caps_requested))
+
+            # Filter out agents already assigned a task in this drain pass
+            candidates = [a for a in candidates if a.session_id not in used_agents]
+
+            if not candidates:
+                continue
+
+            agent = candidates[0]
+
+            instructions = task.instructions
+            if task.resume:
+                instructions = (
+                    "[RESUME] You were previously working on this task. "
+                    "Your conversation history is intact — continue where you left off.\n\n"
+                    + instructions
+                )
+
+            dispatch_task = Task(
+                task_id=task.task_id,
+                delegated_by=task.delegated_by,
+                delegated_to=agent.session_id,
+                instructions=instructions,
+                caps_requested=task.caps_requested,
+                context=task.context,
+                status="running",
+                priority=task.priority,
+                resume=task.resume,
+                callback=task.callback,
+                created_at=task.created_at,
+            )
+
+            try:
+                await self._dispatcher.dispatch(dispatch_task, agent)
+                task.status = "running"
+                task.delegated_to = agent.session_id
+                self._store.save(task)
+                dispatched.add(task_id)
+                used_agents.add(agent.session_id)
+                del self._tasks[task_id]
+                if self._notify_fn is not None:
+                    try:
+                        asyncio.create_task(self._notify_fn("task.updated", task))
+                    except RuntimeError:
+                        pass
+            except Exception:
+                pass  # dispatch failed — leave in queue for next drain
+
+        if dispatched:
+            self._queue = [
+                (p, c, tid) for p, c, tid in self._queue if tid not in dispatched
+            ]
+            heapq.heapify(self._queue)
+
+    async def start_poll_loop(self) -> None:
+        """Start background asyncio task that calls drain() every poll_interval seconds."""
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(self._poll_interval)
+                await self.drain()
+
+        self._poll_task = asyncio.create_task(_loop())
+
+    async def stop(self) -> None:
+        """Cancel the background poll loop."""
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            self._poll_task = None
 
 
 class Broker:

@@ -241,3 +241,134 @@ async def test_task_persists_across_broker_instances(tmp_path):
     assert task is not None
     assert task.task_id == task_id
     assert task.instructions == "survive the restart"
+
+
+# --- Task 2: Scheduler tests ---
+
+import heapq
+from harness_claw.gateway.broker import Scheduler
+
+
+def make_task(task_id: str, caps: list[str], priority: int = 2, status: str = "queued") -> Task:
+    return Task(
+        task_id=task_id,
+        delegated_by="orch",
+        delegated_to="",
+        instructions=f"do task {task_id}",
+        caps_requested=caps,
+        priority=priority,
+        status=status,
+    )
+
+
+async def test_scheduler_push_adds_to_queue():
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[], dispatcher=AsyncMock(), store=store)
+    task = make_task("t1", ["python"])
+    scheduler.push(task)
+    assert len(scheduler._queue) == 1
+    assert store.get("t1").status == "queued"
+
+
+async def test_scheduler_drain_dispatches_matching_task():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[conn], dispatcher=dispatcher, store=store)
+
+    task = make_task("t1", ["python"])
+    scheduler.push(task)
+    await scheduler.drain()
+
+    assert len(scheduler._queue) == 0
+    assert store.get("t1").status == "running"
+    dispatcher.dispatch.assert_called_once()
+
+
+async def test_scheduler_drain_respects_priority():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[conn], dispatcher=dispatcher, store=store)
+
+    low = make_task("low", ["python"], priority=3)
+    high = make_task("high", ["python"], priority=1)
+    normal = make_task("normal", ["python"], priority=2)
+
+    scheduler.push(low)
+    scheduler.push(high)
+    scheduler.push(normal)
+
+    # Only one agent — drain dispatches highest priority first
+    await scheduler.drain()
+
+    dispatched_task = dispatcher.dispatch.call_args[0][0]
+    assert dispatched_task.task_id == "high"
+    assert len(scheduler._queue) == 2  # low and normal still queued
+
+
+async def test_scheduler_recover_re_enqueues_queued_task():
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[], dispatcher=AsyncMock(), store=store)
+    task = make_task("t1", ["python"], status="queued")
+    scheduler.recover([task])
+    assert len(scheduler._queue) == 1
+    assert scheduler._tasks["t1"].resume is False
+
+
+async def test_scheduler_recover_sets_resume_on_running_task():
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[], dispatcher=AsyncMock(), store=store)
+    task = make_task("t1", ["python"], status="running")
+    scheduler.recover([task])
+    assert scheduler._tasks["t1"].resume is True
+
+
+async def test_scheduler_drain_prepends_resume_preamble():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[conn], dispatcher=dispatcher, store=store)
+
+    task = make_task("t1", ["python"], status="running")
+    task.resume = True
+    scheduler.recover([task])
+    await scheduler.drain()
+
+    dispatched_task = dispatcher.dispatch.call_args[0][0]
+    assert "[RESUME]" in dispatched_task.instructions
+    assert "do task t1" in dispatched_task.instructions
+
+
+async def test_scheduler_drain_skips_task_when_no_agent():
+    conn = LocalConnector()  # no agents registered
+    dispatcher = AsyncMock()
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[conn], dispatcher=dispatcher, store=store)
+
+    task = make_task("t1", ["python"])
+    scheduler.push(task)
+    await scheduler.drain()
+
+    assert len(scheduler._queue) == 1  # still queued
+    assert store.get("t1").status == "queued"
+    dispatcher.dispatch.assert_not_called()
+
+
+async def test_scheduler_drain_retries_on_dispatch_failure():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    dispatcher.dispatch.side_effect = RuntimeError("writer not registered")
+    store = TaskStore()
+    scheduler = Scheduler(connectors=[conn], dispatcher=dispatcher, store=store)
+
+    task = make_task("t1", ["python"])
+    scheduler.push(task)
+    await scheduler.drain()
+
+    # Task should still be in queue (dispatch failed)
+    assert len(scheduler._queue) == 1
