@@ -101,4 +101,5 @@ def _attach(args: list[str]) -> None:
 
     env = dict(os.environ)
     env["HARNESS_TOKEN"] = token
+    os.chdir(working_dir)
     os.execvpe("claude", ["claude"], env)
