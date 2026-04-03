@@ -49,11 +49,12 @@ class Broker:
         connectors: list[CapabilityConnector],
         dispatcher: TaskDispatcher,
         event_bus: EventBus | None = None,
+        task_store: TaskStore | None = None,
     ) -> None:
         self._connectors = connectors
         self._dispatcher = dispatcher
         self._event_bus = event_bus
-        self._store = TaskStore()
+        self._store = task_store or TaskStore()
         self._listeners: list[Any] = []
         self._callback_handlers: dict[str, Any] = {}  # session_id -> handler
         self._callback_subs: dict[str, list[Any]] = {}  # task_id -> [Subscription]

@@ -219,3 +219,25 @@ async def test_callback_auto_unsubscribes_after_completion():
 
     await bus.publish(f"task:{task_id}:completed", payload={}, source="test")
     assert len(callback_events) == 1  # still 1 — unsubscribed
+
+
+async def test_task_persists_across_broker_instances(tmp_path):
+    from harness_claw.gateway.task_store import SqliteTaskStore
+
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    store = SqliteTaskStore(tmp_path / "tasks.db")
+    broker1 = Broker(connectors=[conn], dispatcher=AsyncMock(), task_store=store)
+
+    task_id = await broker1.delegate(
+        delegated_by="orchestrator-1",
+        caps=["python"],
+        instructions="survive the restart",
+    )
+
+    # Simulate restart: new Broker instance reusing same store
+    broker2 = Broker(connectors=[conn], dispatcher=AsyncMock(), task_store=store)
+    task = broker2.get_task(task_id)
+    assert task is not None
+    assert task.task_id == task_id
+    assert task.instructions == "survive the restart"
