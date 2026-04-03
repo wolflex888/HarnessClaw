@@ -5,9 +5,12 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 class Embedder:
@@ -17,7 +20,7 @@ class Embedder:
     DIMS = 768
 
     def __init__(self) -> None:
-        self._model = None
+        self._model: SentenceTransformer | None = None
 
     def _load(self) -> None:
         if self._model is None:

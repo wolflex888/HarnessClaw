@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import numpy as np
 import pytest
 from harness_claw.gateway.memory import SqliteMemoryStore, MemoryEntry, Embedder
 
@@ -80,7 +82,6 @@ def test_embedder_similar_texts_have_high_similarity():
     v1 = embedder.embed("JWT token validation skips expiry check")
     v2 = embedder.embed("authentication bug in token expiry")
     v3 = embedder.embed("how to bake chocolate cake")
-    import numpy as np
     def cosine(a, b):
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
     sim_related = cosine(v1, v2)
