@@ -11,6 +11,7 @@ import { AgentTab } from './components/AgentTab'
 import { ToolsTab } from './components/ToolsTab'
 import { MemoryTab } from './components/MemoryTab'
 import { AuditTab } from './components/AuditTab'
+import { WorkflowsTab } from './components/WorkflowsTab'
 
 function emptySessionState(data: {
   session_id: string; role_id: string; working_dir: string; model: string;
@@ -279,9 +280,10 @@ export default function App() {
                   {tab === 'memory' && <MemoryTab />}
                   {tab === 'audit' && <AuditTab />}
                   {tab === 'workflows' && (
-                    <div className="flex-1 flex items-center justify-center text-gray-500 text-sm" data-runs={Object.keys(workflowRuns).length} onClick={() => handleRunWorkflow('', '')}>
-                      Workflows tab (coming in next task)
-                    </div>
+                    <WorkflowsTab
+                      runs={Object.values(workflowRuns)}
+                      onRunWorkflow={handleRunWorkflow}
+                    />
                   )}
                 </>
               )}
