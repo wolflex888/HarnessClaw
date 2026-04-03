@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from harness_claw.gateway.audit import AuditLogger
 from harness_claw.gateway.auth import TokenStore
 from harness_claw.gateway.broker import Broker, LocalDispatcher
+from harness_claw.gateway.event_bus import LocalEventBus
 from harness_claw.gateway.capability import LocalConnector, GatewayConnector
 from harness_claw.gateway.memory import SqliteMemoryStore
 from harness_claw.gateway.mcp_server import GatewayMCP
@@ -42,7 +43,8 @@ gateway_connector = GatewayConnector(
     heartbeat_ttl=cfg.gateway_heartbeat_ttl,
 )
 dispatcher = LocalDispatcher()
-broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher)
+event_bus = LocalEventBus()
+broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus)
 memory = SqliteMemoryStore(_memory_db)
 audit = AuditLogger(_audit_jsonl)
 
@@ -61,6 +63,7 @@ runner = JobRunner(
     token_store=token_store,
     connector=connector,
     dispatcher=dispatcher,
+    broker=broker,
     mcp_base_url="http://localhost:8000",
 )
 
@@ -76,6 +79,25 @@ async def startup() -> None:
         await runner._broadcast({"type": event, "task": task_dict})
 
     broker.add_listener(on_task_event)
+
+    import json as _json
+
+    def _make_pty_callback_handler(session_id: str):
+        async def _on_task_callback(event: Any) -> None:
+            result_str = _json.dumps(event.payload.get("task", {}).get("result", ""))
+            task_id = event.payload.get("task", {}).get("task_id", "unknown")
+            status = event.payload.get("task", {}).get("status", "unknown")
+            msg = (
+                f"\n[TASK CALLBACK] task_id={task_id} status={status}\n"
+                f"Result: {result_str}\n"
+            ).encode()
+            write_fn = dispatcher._writers.get(session_id)
+            if write_fn is not None:
+                write_fn(msg)
+        return _on_task_callback
+
+    runner._pty_callback_handler_factory = _make_pty_callback_handler
+    runner._broker = broker
 
     for session in store.all():
         if session.status != "killed":

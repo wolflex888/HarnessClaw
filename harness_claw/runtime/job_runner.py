@@ -33,6 +33,7 @@ class JobRunner:
         token_store: Any | None = None,
         connector: Any | None = None,
         dispatcher: Any | None = None,
+        broker: Any | None = None,
         mcp_base_url: str = "http://localhost:8000",
     ) -> None:
         self._registry = registry
@@ -40,11 +41,13 @@ class JobRunner:
         self._token_store = token_store
         self._connector = connector
         self._dispatcher = dispatcher
+        self._broker = broker
         self._mcp_base_url = mcp_base_url
         self._pty_sessions: dict[str, PtySession] = {}
         self._cost_pollers: dict[str, CostPoller] = {}
         self._session_tokens: dict[str, str] = {}  # session_id → token
         self._senders: set[Send] = set()
+        self._pty_callback_handler_factory: Any | None = None
 
     def add_sender(self, send: Send) -> None:
         self._senders.add(send)
@@ -131,6 +134,11 @@ class JobRunner:
         if self._dispatcher is not None:
             self._dispatcher.register_writer(session_id, pty.write)
 
+        # Register callback handler for task notifications into this agent's PTY
+        if self._broker is not None and self._pty_callback_handler_factory is not None:
+            handler = self._pty_callback_handler_factory(session_id)
+            self._broker.register_callback_handler(session_id, handler)
+
         session.status = "running"
         self._store.save(session)
         await self._broadcast({
@@ -186,6 +194,8 @@ class JobRunner:
         # Unregister writer from dispatcher
         if self._dispatcher is not None:
             self._dispatcher.unregister_writer(session_id)
+        if self._broker is not None:
+            self._broker.unregister_callback_handler(session_id)
         session = self._store.get(session_id)
         if session:
             session.status = "killed"

@@ -24,6 +24,7 @@ class GatewayConfig:
     memory_backend: str = "sqlite"
     memory_path: str = "./memory.db"
     dispatcher: str = "local"
+    event_bus_backend: str = "local"
     gateway_bootstrap_token: str = ""
     gateway_heartbeat_ttl: int = 30
 
@@ -37,6 +38,7 @@ class RoleRegistry:
         policy = data.get("policy", {})
         memory = data.get("memory", {})
         broker = data.get("broker", {})
+        event_bus = data.get("event_bus", {})
         gateway_connector = next(
             (c for c in data.get("connectors", []) if c.get("type") == "gateway"),
             {}
@@ -46,6 +48,7 @@ class RoleRegistry:
             memory_backend=memory.get("backend", "sqlite"),
             memory_path=memory.get("path", "./memory.db"),
             dispatcher=broker.get("dispatcher", "local"),
+            event_bus_backend=event_bus.get("backend", "local"),
             gateway_bootstrap_token=gateway_connector.get("bootstrap_token", ""),
             gateway_heartbeat_ttl=gateway_connector.get("heartbeat_ttl", 30),
         )
