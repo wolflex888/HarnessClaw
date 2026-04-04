@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
@@ -13,6 +14,8 @@ from harness_claw.runtime.pty_session import PtySession
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
 from harness_claw.runtime.session_store import SessionStore
+from harness_claw.observability.store import AgentObservabilityStore
+from harness_claw.observability.provider import ObservabilityProvider, NullProvider
 
 _logger = logging.getLogger(__name__)
 
@@ -35,6 +38,8 @@ class JobRunner:
         dispatcher: Any | None = None,
         broker: Any | None = None,
         mcp_base_url: str = "http://localhost:8000",
+        obs_store: AgentObservabilityStore | None = None,
+        obs_provider: ObservabilityProvider | None = None,
     ) -> None:
         self._registry = registry
         self._store = store
@@ -43,6 +48,8 @@ class JobRunner:
         self._dispatcher = dispatcher
         self._broker = broker
         self._mcp_base_url = mcp_base_url
+        self._obs_store = obs_store if obs_store is not None else AgentObservabilityStore()
+        self._obs_provider = obs_provider if obs_provider is not None else NullProvider()
         self._pty_sessions: dict[str, PtySession] = {}
         self._cost_pollers: dict[str, CostPoller] = {}
         self._session_tokens: dict[str, str] = {}  # session_id → token
@@ -128,7 +135,14 @@ class JobRunner:
 
         pty = PtySession(session_id)
 
+        # Configure observability (injects HARNESS_SESSION_ID + HARNESS_BASE_URL)
+        if not is_terminal:
+            self._obs_store.init_session(session_id)
+            self._obs_provider.configure_session(session_id, session.working_dir, extra_env)
+
         async def on_output(data: bytes) -> None:
+            if not is_terminal:
+                self._obs_store.update_output(session_id, datetime.now(timezone.utc))
             await self._broadcast({
                 "type": "output",
                 "session_id": session_id,
@@ -183,7 +197,7 @@ class JobRunner:
                     "output_tokens": output_tokens,
                 })
 
-            poller = CostPoller(session_id, session.working_dir, on_cost_update)
+            poller = CostPoller(session_id, session.working_dir, on_cost_update, obs_store=self._obs_store)
             poller.start()
             self._cost_pollers[session_id] = poller
 
@@ -223,6 +237,11 @@ class JobRunner:
         if session:
             session.status = "killed"
             self._store.save(session)
+        # Observability cleanup
+        killed_session = self._store.get(session_id)
+        if killed_session:
+            self._obs_provider.unconfigure_session(session_id, killed_session.working_dir)
+        self._obs_store.remove_session(session_id)
 
     def delete_session(self, session_id: str) -> None:
         _logger.info("Deleting session %s", session_id)
