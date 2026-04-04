@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "harnessclaw": {
+      "type": "sse",
+      "url": "http://localhost:8000/mcp/sse?token=8NlKqQrOgBurWqMF5VXg6SSWT__0FJ3J6fihJf6_J4E"
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "_harnessclaw": true,
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$HARNESS_SESSION_ID\" ] && exit 0; jq --arg sid \"$HARNESS_SESSION_ID\" '{harness_session_id: $sid, event: \"tool_start\", tool_name: .tool_name}' | curl -s -X POST \"$HARNESS_BASE_URL/agent/tool-event\" -H 'Content-Type: application/json' -d @-"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "_harnessclaw": true,
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$HARNESS_SESSION_ID\" ] && exit 0; jq --arg sid \"$HARNESS_SESSION_ID\" '{harness_session_id: $sid, event: \"tool_end\", tool_name: .tool_name}' | curl -s -X POST \"$HARNESS_BASE_URL/agent/tool-event\" -H 'Content-Type: application/json' -d @-"
+          }
+        ]
+      }
+    ]
+  }
+}

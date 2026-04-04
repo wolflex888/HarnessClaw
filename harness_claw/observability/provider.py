@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 
 
 _PRE_HOOK_CMD = (
+    "[ -z \"$HARNESS_SESSION_ID\" ] && exit 0; "
     "jq --arg sid \"$HARNESS_SESSION_ID\" "
     "'{harness_session_id: $sid, event: \"tool_start\", tool_name: .tool_name}' "
     "| curl -s -X POST \"$HARNESS_BASE_URL/agent/tool-event\" "
@@ -13,6 +14,7 @@ _PRE_HOOK_CMD = (
 )
 
 _POST_HOOK_CMD = (
+    "[ -z \"$HARNESS_SESSION_ID\" ] && exit 0; "
     "jq --arg sid \"$HARNESS_SESSION_ID\" "
     "'{harness_session_id: $sid, event: \"tool_end\", tool_name: .tool_name}' "
     "| curl -s -X POST \"$HARNESS_BASE_URL/agent/tool-event\" "
