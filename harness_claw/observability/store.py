@@ -87,13 +87,11 @@ class AgentObservabilityStore:
         obs.last_output_at = at
 
     def add_backfill_event(self, session_id: str, event: ToolEvent) -> None:
-        """Add a completed ToolEvent from JSONL backfill if not already present."""
+        """Add a completed ToolEvent from JSONL backfill."""
         obs = self._sessions.get(session_id)
         if obs is None:
             return
-        existing_starts = {e.started_at for e in obs.recent_activity}
-        if event.started_at not in existing_starts:
-            obs.recent_activity.appendleft(event)
+        obs.recent_activity.appendleft(event)
 
     def get_status(self, session_id: str) -> AgentStatus | None:
         obs = self._sessions.get(session_id)
