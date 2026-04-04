@@ -13,7 +13,9 @@ function formatDuration(ms: number | null): string {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const date = new Date(iso)
+  if (isNaN(date.getTime())) return '—'
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function ActivityTimeline({ events }: { events: ToolEvent[] }) {
@@ -61,7 +63,7 @@ export function AgentTab({ session, role, agentStatus }: Props) {
           Activity
           {agentStatus?.is_stuck && (
             <span className="ml-2 text-amber-400 normal-case">
-              ⚠ {agentStatus.stuck_reason?.replace('_', ' ')}
+              ⚠ {agentStatus.stuck_reason?.replace(/_/g, ' ')}
             </span>
           )}
         </span>
