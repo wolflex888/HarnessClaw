@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SessionState, AgentStatus } from '../types'
 
 interface Props {
@@ -25,8 +25,6 @@ function statusColor(status: string): string {
 
 function useElapsedSeconds(startedAt: string | null): number {
   const [elapsed, setElapsed] = useState(0)
-  const startedAtRef = useRef(startedAt)
-  startedAtRef.current = startedAt
 
   useEffect(() => {
     if (!startedAt) { setElapsed(0); return }
