@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import pytest
-
-from harness_claw.observability.provider import ClaudeCodeProvider, NullProvider
+from harness_claw.observability.provider import ClaudeCodeProvider, NullProvider, ObservabilityProvider
 
 
 def test_null_provider_configure_does_nothing(tmp_path):
@@ -69,10 +66,13 @@ def test_claude_provider_unconfigure_removes_file_if_empty(tmp_path):
     provider = ClaudeCodeProvider(base_url="http://localhost:8000")
     provider.configure_session("s1", str(tmp_path), {})
     provider.unconfigure_session("s1", str(tmp_path))
-    # File should be gone (only had harnessclaw hooks)
     settings_path = tmp_path / ".claude" / "settings.json"
-    # Either removed or has no harnessclaw content
-    if settings_path.exists():
-        data = json.loads(settings_path.read_text())
-        assert data.get("hooks", {}).get("PreToolUse", []) == [] or \
-               all(not h.get("_harnessclaw") for h in data.get("hooks", {}).get("PreToolUse", []))
+    assert not settings_path.exists()
+
+
+def test_null_provider_satisfies_protocol():
+    assert isinstance(NullProvider(), ObservabilityProvider)
+
+
+def test_claude_provider_satisfies_protocol():
+    assert isinstance(ClaudeCodeProvider(), ObservabilityProvider)

@@ -52,8 +52,8 @@ class ClaudeCodeProvider:
         if path.exists():
             try:
                 return json.loads(path.read_text())
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                pass  # corrupted file — treat as empty, overwrite below
         return {}
 
     def _write_settings(self, path: Path, data: dict) -> None:
