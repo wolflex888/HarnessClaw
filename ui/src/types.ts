@@ -59,6 +59,24 @@ export interface TaskRecord {
   resume?: boolean
 }
 
+export interface ToolEvent {
+  tool_name: string
+  started_at: string        // ISO8601
+  ended_at: string | null
+  duration_ms: number | null
+  session_id: string
+}
+
+export interface AgentStatus {
+  session_id: string
+  current_tool: string | null
+  current_tool_started_at: string | null   // ISO8601
+  last_output_at: string | null
+  recent_activity: ToolEvent[]
+  is_stuck: boolean
+  stuck_reason: 'tool_timeout' | 'tool_loop' | 'output_silence' | null
+}
+
 // WebSocket: server → client
 export type WSIncoming =
   | { type: 'output'; session_id: string; data: string }
@@ -73,6 +91,7 @@ export type WSIncoming =
   | { type: 'workflow.step'; run_id: string; step_id: string; status: 'completed' | 'failed'; result: unknown }
   | { type: 'workflow.completed'; run_id: string }
   | { type: 'workflow.failed'; run_id: string; reason: string }
+  | { type: 'agent_status' } & AgentStatus
 
 // Workflow definitions (from /api/workflows)
 export interface WorkflowStep {

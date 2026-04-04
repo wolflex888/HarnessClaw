@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { WsClient } from './ws'
-import type { RoleConfig, SessionState, WSIncoming, TaskRecord, ToolInfo, WorkflowRun } from './types'
+import type { RoleConfig, SessionState, WSIncoming, TaskRecord, ToolInfo, WorkflowRun, AgentStatus } from './types'
 import { SessionSidebar } from './components/SessionSidebar'
 import { SessionCreatePanel } from './components/SessionCreatePanel'
 import { SessionCostBar } from './components/SessionCostBar'
@@ -31,6 +31,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Record<string, TaskRecord>>({})
   const [mcpTools, setMcpTools] = useState<ToolInfo[]>([])
   const [workflowRuns, setWorkflowRuns] = useState<Record<string, WorkflowRun>>({})
+  const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus>>({})
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('work')
@@ -161,6 +162,9 @@ export default function App() {
         if (!existing) return prev
         return { ...prev, [msg.run_id]: { ...existing, status: 'failed' } }
       })
+    } else if (msg.type === 'agent_status') {
+      const { type: _type, ...status } = msg as { type: 'agent_status' } & AgentStatus
+      setAgentStatuses(prev => ({ ...prev, [status.session_id]: status }))
     }
   }, [])
 
@@ -217,6 +221,8 @@ export default function App() {
         onNewSession={() => setShowCreate(true)}
         onDelete={handleDelete}
         onKill={handleKill}
+        // @ts-ignore agentStatuses prop added in Task 8
+        agentStatuses={agentStatuses}
       />
 
       <div className="flex flex-col flex-1 min-w-0">
@@ -275,7 +281,8 @@ export default function App() {
                       onRetry={handleRetry}
                     />
                   )}
-                  {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} />}
+                  {/* @ts-ignore agentStatus prop added in Task 9 */}
+                  {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} agentStatus={agentStatuses[activeSession.session_id] ?? null} />}
                   {tab === 'tools' && <ToolsTab tools={mcpTools} />}
                   {tab === 'memory' && <MemoryTab />}
                   {tab === 'audit' && <AuditTab />}
