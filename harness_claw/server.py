@@ -234,6 +234,7 @@ async def retry_task(task_id: str) -> dict[str, Any]:
             instructions=task.instructions,
             context=task.context,
             callback=task.callback,
+            priority=task.priority,
         )
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
