@@ -476,6 +476,18 @@ def _build_mcp_server(token: str) -> MCPServer:
     return server
 
 
+class _SseHandledResponse(Response):
+    """No-op response returned after connect_sse handles the full ASGI lifecycle.
+
+    connect_sse sends http.response.start via request._send internally.
+    Returning a normal Response() would send http.response.start a second time,
+    causing uvicorn's 'Expected http.response.body, got http.response.start' error.
+    """
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:  # type: ignore[override]
+        pass  # SSE transport already completed the response
+
+
 @app.get("/mcp/sse")
 async def mcp_sse(request: Request) -> Response:
     token = request.query_params.get("token", "")
@@ -484,7 +496,7 @@ async def mcp_sse(request: Request) -> Response:
         request.scope, request.receive, request._send
     ) as streams:
         await server.run(streams[0], streams[1], server.create_initialization_options())
-    return Response()
+    return _SseHandledResponse()
 
 
 app.mount("/mcp/messages/", app=_sse_transport.handle_post_message)
