@@ -237,10 +237,10 @@ class JobRunner:
         if session:
             session.status = "killed"
             self._store.save(session)
+
         # Observability cleanup
-        killed_session = self._store.get(session_id)
-        if killed_session:
-            self._obs_provider.unconfigure_session(session_id, killed_session.working_dir)
+        if session:
+            self._obs_provider.unconfigure_session(session_id, session.working_dir)
         self._obs_store.remove_session(session_id)
 
     def delete_session(self, session_id: str) -> None:
