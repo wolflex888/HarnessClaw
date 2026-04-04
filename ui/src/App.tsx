@@ -221,7 +221,6 @@ export default function App() {
         onNewSession={() => setShowCreate(true)}
         onDelete={handleDelete}
         onKill={handleKill}
-        // @ts-expect-error agentStatuses prop added in Task 8
         agentStatuses={agentStatuses}
       />
 
