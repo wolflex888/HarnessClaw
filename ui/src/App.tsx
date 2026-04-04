@@ -280,7 +280,6 @@ export default function App() {
                       onRetry={handleRetry}
                     />
                   )}
-                  {/* @ts-expect-error agentStatus prop added in Task 9 */}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} agentStatus={agentStatuses[activeSession.session_id] ?? null} />}
                   {tab === 'tools' && <ToolsTab tools={mcpTools} />}
                   {tab === 'memory' && <MemoryTab />}
