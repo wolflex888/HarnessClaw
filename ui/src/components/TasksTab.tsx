@@ -116,7 +116,7 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry 
         <span className={`text-xs w-20 text-right ${statusColor(task.status)}`}>
           {statusBadge(task.status)}
         </span>
-        <span className={`text-xs ${priorityColor(task.priority ?? 2)}`}>
+        <span className={`text-xs w-16 ${priorityColor(task.priority ?? 2)}`}>
           {priorityLabel(task.priority ?? 2)}
         </span>
       </button>
