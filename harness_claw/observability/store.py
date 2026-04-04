@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Deque
 
 from harness_claw.observability.models import AgentStatus, ToolEvent
@@ -22,7 +22,7 @@ class _SessionObs:
 
 
 def _compute_stuck(obs: _SessionObs) -> tuple[bool, str | None]:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if obs.current_tool and obs.current_tool_started_at:
         elapsed = (now - obs.current_tool_started_at).total_seconds()
@@ -48,7 +48,8 @@ class AgentObservabilityStore:
         self._sessions: dict[str, _SessionObs] = {}
 
     def init_session(self, session_id: str) -> None:
-        self._sessions[session_id] = _SessionObs(session_id=session_id)
+        if session_id not in self._sessions:
+            self._sessions[session_id] = _SessionObs(session_id=session_id)
 
     def remove_session(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -92,7 +93,7 @@ class AgentObservabilityStore:
             return
         existing_starts = {e.started_at for e in obs.recent_activity}
         if event.started_at not in existing_starts:
-            obs.recent_activity.append(event)
+            obs.recent_activity.appendleft(event)
 
     def get_status(self, session_id: str) -> AgentStatus | None:
         obs = self._sessions.get(session_id)
