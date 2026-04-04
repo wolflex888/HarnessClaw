@@ -53,6 +53,7 @@ class JobRunner:
         self._pty_sessions: dict[str, PtySession] = {}
         self._cost_pollers: dict[str, CostPoller] = {}
         self._session_tokens: dict[str, str] = {}  # session_id → token
+        self._obs_working_dirs: dict[str, str] = {}  # session_id → working_dir for obs cleanup
         self._senders: set[Send] = set()
         self._pty_callback_handler_factory: Any | None = None
 
@@ -139,6 +140,7 @@ class JobRunner:
         if not is_terminal:
             self._obs_store.init_session(session_id)
             self._obs_provider.configure_session(session_id, session.working_dir, extra_env)
+            self._obs_working_dirs[session_id] = session.working_dir
 
         async def on_output(data: bytes) -> None:
             if not is_terminal:
@@ -239,8 +241,9 @@ class JobRunner:
             self._store.save(session)
 
         # Observability cleanup
-        if session:
-            self._obs_provider.unconfigure_session(session_id, session.working_dir)
+        working_dir = self._obs_working_dirs.pop(session_id, None)
+        if working_dir:
+            self._obs_provider.unconfigure_session(session_id, working_dir)
         self._obs_store.remove_session(session_id)
 
     def delete_session(self, session_id: str) -> None:

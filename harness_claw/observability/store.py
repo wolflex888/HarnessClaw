@@ -62,12 +62,14 @@ class AgentObservabilityStore:
         obs.current_tool_started_at = timestamp
 
     def update_tool_end(
-        self, session_id: str, tool_name: str, ended_at: datetime, duration_ms: int
+        self, session_id: str, tool_name: str, ended_at: datetime, duration_ms: int | None
     ) -> None:
         obs = self._sessions.get(session_id)
         if obs is None:
             return
-        started_at = obs.current_tool_started_at or ended_at - timedelta(milliseconds=duration_ms)
+        started_at = obs.current_tool_started_at or (
+            ended_at - timedelta(milliseconds=duration_ms) if duration_ms is not None else ended_at
+        )
         event = ToolEvent(
             tool_name=tool_name,
             started_at=started_at,

@@ -198,7 +198,7 @@ async def agent_tool_event(req: ToolEventRequest) -> None:
     if req.event == "tool_start":
         obs_store.update_tool_start(req.harness_session_id, req.tool_name, now)
     elif req.event == "tool_end":
-        obs_store.update_tool_end(req.harness_session_id, req.tool_name, now, 0)
+        obs_store.update_tool_end(req.harness_session_id, req.tool_name, now, None)
 
     status = obs_store.get_status(req.harness_session_id)
     if status is not None:
