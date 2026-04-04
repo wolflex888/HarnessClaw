@@ -163,8 +163,8 @@ export default function App() {
         return { ...prev, [msg.run_id]: { ...existing, status: 'failed' } }
       })
     } else if (msg.type === 'agent_status') {
-      const { type: _type, ...status } = msg as { type: 'agent_status' } & AgentStatus
-      setAgentStatuses(prev => ({ ...prev, [status.session_id]: status }))
+      const { type: _, ...status } = msg as Extract<WSIncoming, { type: 'agent_status' }>
+      setAgentStatuses(prev => ({ ...prev, [msg.session_id]: status as AgentStatus }))
     }
   }, [])
 
@@ -221,7 +221,7 @@ export default function App() {
         onNewSession={() => setShowCreate(true)}
         onDelete={handleDelete}
         onKill={handleKill}
-        // @ts-ignore agentStatuses prop added in Task 8
+        // @ts-expect-error agentStatuses prop added in Task 8
         agentStatuses={agentStatuses}
       />
 
@@ -281,7 +281,7 @@ export default function App() {
                       onRetry={handleRetry}
                     />
                   )}
-                  {/* @ts-ignore agentStatus prop added in Task 9 */}
+                  {/* @ts-expect-error agentStatus prop added in Task 9 */}
                   {tab === 'agent' && <AgentTab session={activeSession} role={activeRole} agentStatus={agentStatuses[activeSession.session_id] ?? null} />}
                   {tab === 'tools' && <ToolsTab tools={mcpTools} />}
                   {tab === 'memory' && <MemoryTab />}
