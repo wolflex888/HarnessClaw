@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,8 @@ from harness_claw.gateway.mcp_server import GatewayMCP
 from harness_claw.gateway.policy import LocalPolicyEngine
 from harness_claw.gateway.workflow_engine import WorkflowEngine
 from harness_claw.role_registry import RoleRegistry
+from harness_claw.observability.store import AgentObservabilityStore
+from harness_claw.observability.provider import ClaudeCodeProvider
 from harness_claw.runtime.job_runner import JobRunner
 from harness_claw.runtime.session_store import SessionStore
 from harness_claw.api import sessions as sessions_api
@@ -55,6 +58,8 @@ task_store = SqliteTaskStore(_tasks_db)
 broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
 memory = SqliteMemoryStore(_memory_db)
 audit = AuditLogger(_audit_jsonl)
+obs_store = AgentObservabilityStore()
+obs_provider = ClaudeCodeProvider(base_url="http://localhost:8000")
 workflow_engine = WorkflowEngine(
     definitions=registry.workflow_definitions,
     broker=broker,
@@ -80,6 +85,8 @@ runner = JobRunner(
     dispatcher=dispatcher,
     broker=broker,
     mcp_base_url="http://localhost:8000",
+    obs_store=obs_store,
+    obs_provider=obs_provider,
 )
 
 
@@ -177,6 +184,33 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         return JSONResponse({"result": result})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+
+class ToolEventRequest(BaseModel):
+    harness_session_id: str
+    event: str           # "tool_start" | "tool_end"
+    tool_name: str
+
+
+@app.post("/agent/tool-event", status_code=204)
+async def agent_tool_event(req: ToolEventRequest) -> None:
+    now = datetime.now(timezone.utc)
+    if req.event == "tool_start":
+        obs_store.update_tool_start(req.harness_session_id, req.tool_name, now)
+    elif req.event == "tool_end":
+        obs_store.update_tool_end(req.harness_session_id, req.tool_name, now, 0)
+
+    status = obs_store.get_status(req.harness_session_id)
+    if status is not None:
+        await runner._broadcast({"type": "agent_status", **status.to_dict()})
+
+
+@app.get("/agent/{session_id}/status")
+def get_agent_status(session_id: str) -> dict[str, Any]:
+    status = obs_store.get_status(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return status.to_dict()
 
 
 # External agent registration endpoints
