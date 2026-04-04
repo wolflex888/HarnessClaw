@@ -37,6 +37,18 @@ function statusColor(status: TaskRecord['status']) {
   return 'text-gray-500'
 }
 
+function priorityLabel(priority: number): string {
+  if (priority === 1) return '↑ High'
+  if (priority === 3) return '↓ Low'
+  return '→ Normal'
+}
+
+function priorityColor(priority: number): string {
+  if (priority === 1) return 'text-red-400'
+  if (priority === 3) return 'text-gray-500'
+  return 'text-gray-400'
+}
+
 function TaskTerminalPanel({ sessionId, terminalWriters }: {
   sessionId: string
   terminalWriters: MutableRefObject<Record<string, (data: Uint8Array) => void>>
@@ -103,6 +115,9 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry 
         </div>
         <span className={`text-xs w-20 text-right ${statusColor(task.status)}`}>
           {statusBadge(task.status)}
+        </span>
+        <span className={`text-xs ${priorityColor(task.priority ?? 2)}`}>
+          {priorityLabel(task.priority ?? 2)}
         </span>
       </button>
 

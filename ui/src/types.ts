@@ -55,6 +55,8 @@ export interface TaskRecord {
   callback: boolean
   created_at: string
   updated_at: string
+  priority: number
+  resume: boolean
 }
 
 // WebSocket: server → client
