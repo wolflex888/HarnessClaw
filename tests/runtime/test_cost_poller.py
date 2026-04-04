@@ -84,3 +84,70 @@ async def test_poll_ignores_non_result_events(tmp_path):
 
     assert len(updates) == 1
     assert abs(updates[0] - 0.02) < 0.001
+
+
+async def test_poll_extracts_tool_events(tmp_path):
+    project_dir = tmp_path / "projects" / "tmp-myproject"
+    project_dir.mkdir(parents=True)
+    jsonl = project_dir / "session-abc.jsonl"
+    jsonl.write_text(
+        json.dumps({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}}],
+            },
+        }) + "\n"
+        + json.dumps({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": []}],
+            },
+        }) + "\n"
+    )
+
+    from harness_claw.observability.store import AgentObservabilityStore
+    obs_store = AgentObservabilityStore()
+    obs_store.init_session("sess-1")
+    updates = []
+
+    async def on_update(session_id, cost, input_tokens, output_tokens):
+        updates.append(cost)
+
+    poller = CostPoller("sess-1", "/tmp/myproject", on_update, claude_home=tmp_path, obs_store=obs_store)
+    await poller._poll()
+
+    status = obs_store.get_status("sess-1")
+    assert len(status.recent_activity) == 1
+    assert status.recent_activity[0].tool_name == "Bash"
+
+
+async def test_poll_does_not_duplicate_tool_events(tmp_path):
+    project_dir = tmp_path / "projects" / "tmp-myproject"
+    project_dir.mkdir(parents=True)
+    jsonl = project_dir / "session-abc.jsonl"
+    entry = (
+        json.dumps({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_2", "name": "Read", "input": {}}]},
+        }) + "\n"
+        + json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_2", "content": []}]},
+        }) + "\n"
+    )
+    jsonl.write_text(entry)
+
+    from harness_claw.observability.store import AgentObservabilityStore
+    obs_store = AgentObservabilityStore()
+    obs_store.init_session("sess-1")
+
+    async def noop(sid, cost, inp, out): pass
+
+    poller = CostPoller("sess-1", "/tmp/myproject", noop, claude_home=tmp_path, obs_store=obs_store)
+    await poller._poll()
+    await poller._poll()  # second poll — same data
+
+    status = obs_store.get_status("sess-1")
+    assert len(status.recent_activity) == 1
