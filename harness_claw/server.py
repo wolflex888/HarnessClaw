@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -188,7 +188,7 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
 
 class ToolEventRequest(BaseModel):
     harness_session_id: str
-    event: str           # "tool_start" | "tool_end"
+    event: Literal["tool_start", "tool_end"]
     tool_name: str
 
 
@@ -206,7 +206,7 @@ async def agent_tool_event(req: ToolEventRequest) -> None:
 
 
 @app.get("/agent/{session_id}/status")
-def get_agent_status(session_id: str) -> dict[str, Any]:
+async def get_agent_status(session_id: str) -> dict[str, Any]:
     status = obs_store.get_status(session_id)
     if status is None:
         raise HTTPException(status_code=404, detail="session not found")
