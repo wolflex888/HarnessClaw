@@ -18,6 +18,9 @@ class RoleConfig:
     max_tokens: int = 8192
     scopes: list[str] = field(default_factory=list)
     caps: list[str] = field(default_factory=list)
+    max_cost: float | None = None
+    max_time: int | None = None
+    allowed_tools: list[str] | None = None
 
 
 @dataclass
@@ -72,6 +75,9 @@ class RoleRegistry:
                 max_tokens=item.get("max_tokens", 8192),
                 scopes=scopes,
                 caps=list(item.get("caps", [])),
+                max_cost=item.get("max_cost"),
+                max_time=item.get("max_time"),
+                allowed_tools=list(item["allowed_tools"]) if item.get("allowed_tools") else None,
             )
             self._roles[role.id] = role
 
