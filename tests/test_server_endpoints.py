@@ -66,11 +66,11 @@ def test_execute_plan_missing_file_returns_error(client):
         json={"name": "execute_plan", "arguments": {"plan_path": "/nonexistent/plan.md"}},
         headers={"Authorization": f"Bearer {_get_bootstrap_token()}"},
     )
-    assert resp.status_code in (200, 400, 422)
+    assert resp.status_code == 400
     body = resp.text
-    assert "not found" in body.lower() or "error" in body.lower() or "FileNotFoundError" in body.lower()
+    assert "not found" in body.lower() or "FileNotFoundError" in body.lower()
 
 
 def _get_bootstrap_token():
     from harness_claw.server import token_store
-    return token_store._tokens.get("bootstrap", {}).get("token", "changeme")
+    return token_store.issue("bootstrap", ["agent:delegate"])

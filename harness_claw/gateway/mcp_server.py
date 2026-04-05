@@ -204,12 +204,12 @@ class GatewayMCP:
             on_progress=on_progress,
         )
 
+        summary = await executor.execute(plan_path)
+
         self._audit.log(AuditEvent(
             subject=subject, operation="execute_plan", resource=plan_path,
             outcome="allowed", details={"plan_path": plan_path},
         ))
-
-        summary = await executor.execute(plan_path)
         progress_output = "\n".join(progress_log)
         return f"{progress_output}\n\n---\n\n{summary}"
 
