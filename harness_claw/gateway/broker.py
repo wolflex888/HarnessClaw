@@ -130,6 +130,9 @@ class Scheduler:
                 resume=task.resume,
                 callback=task.callback,
                 created_at=task.created_at,
+                max_cost=task.max_cost,
+                max_time=task.max_time,
+                allowed_tools=task.allowed_tools,
             )
 
             try:
@@ -225,6 +228,9 @@ class Broker:
         context: dict[str, Any] | None = None,
         callback: bool = False,
         priority: int = 2,
+        max_cost: float | None = None,
+        max_time: int | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> str:
         candidates: list[AgentAdvertisement] = []
         for connector in self._connectors:
@@ -240,6 +246,9 @@ class Broker:
             status="queued",
             callback=callback,
             priority=priority,
+            max_cost=max_cost,
+            max_time=max_time,
+            allowed_tools=allowed_tools,
         )
 
         if candidates:

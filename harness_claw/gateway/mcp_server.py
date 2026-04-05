@@ -85,6 +85,9 @@ class GatewayMCP:
         context: dict[str, Any] | None = None,
         callback: bool = False,
         priority: int = 2,
+        max_cost: float | None = None,
+        max_time: int | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> dict[str, Any]:
         subject = self._auth(token, "agent:delegate")
         task_id = await self._broker.delegate(
@@ -94,6 +97,9 @@ class GatewayMCP:
             context=context,
             callback=callback,
             priority=priority,
+            max_cost=max_cost,
+            max_time=max_time,
+            allowed_tools=allowed_tools,
         )
         task = self._broker.get_task(task_id)
         self._audit.log(AuditEvent(
@@ -103,6 +109,8 @@ class GatewayMCP:
                 "callback": callback,
                 "priority": priority,
                 "delegated_to": task.delegated_to if task else None,
+                "max_cost": max_cost,
+                "max_time": max_time,
             },
         ))
         return {"task_id": task_id}

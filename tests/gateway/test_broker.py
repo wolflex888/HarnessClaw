@@ -437,3 +437,19 @@ async def test_complete_task_triggers_drain():
 
     # drain should have dispatched the queued task
     assert broker2.get_task(queued_id).status == "running"
+
+
+async def test_delegate_stores_limit_fields():
+    conn = LocalConnector()
+    await conn.register(make_agent("s1", ["python"]))
+    dispatcher = AsyncMock()
+    broker = Broker(connectors=[conn], dispatcher=dispatcher)
+
+    task_id = await broker.delegate(
+        "orch-1", caps=["python"], instructions="do it",
+        max_cost=0.5, max_time=60, allowed_tools=["Read"],
+    )
+    task = broker.get_task(task_id)
+    assert task.max_cost == 0.5
+    assert task.max_time == 60
+    assert task.allowed_tools == ["Read"]

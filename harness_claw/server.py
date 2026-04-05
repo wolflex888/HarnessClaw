@@ -269,6 +269,9 @@ async def retry_task(task_id: str) -> dict[str, Any]:
             context=task.context,
             callback=task.callback,
             priority=task.priority,
+            max_cost=task.max_cost,
+            max_time=task.max_time,
+            allowed_tools=task.allowed_tools,
         )
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -387,6 +390,9 @@ _MCP_TOOLS = [
             "context": {"type": "object"},
             "callback": {"type": "boolean"},
             "priority": {"type": "integer", "description": "1=high, 2=normal (default), 3=low"},
+            "max_cost": {"type": "number", "description": "USD cost cap; pauses agent when exceeded"},
+            "max_time": {"type": "integer", "description": "Time cap in seconds; pauses agent when exceeded"},
+            "allowed_tools": {"type": "array", "items": {"type": "string"}, "description": "Tool allow-list; omit for all tools"},
         }, "required": ["caps", "instructions"]}),
     mcp_types.Tool(name="agent.status", description="Check status of a delegated task",
         inputSchema={"type": "object", "properties": {"task_id": {"type": "string"}}, "required": ["task_id"]}),
