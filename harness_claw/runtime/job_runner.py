@@ -141,7 +141,10 @@ class JobRunner:
         # Configure observability (injects HARNESS_SESSION_ID + HARNESS_BASE_URL)
         if not is_terminal:
             self._obs_store.init_session(session_id)
-            self._obs_provider.configure_session(session_id, session.working_dir, extra_env)
+            self._obs_provider.configure_session(
+                session_id, session.working_dir, extra_env,
+                allowed_tools=role.allowed_tools,
+            )
             self._obs_working_dirs[session_id] = session.working_dir
 
         async def on_output(data: bytes) -> None:

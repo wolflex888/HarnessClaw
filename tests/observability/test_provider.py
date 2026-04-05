@@ -76,3 +76,37 @@ def test_null_provider_satisfies_protocol():
 
 def test_claude_provider_satisfies_protocol():
     assert isinstance(ClaudeCodeProvider(), ObservabilityProvider)
+
+
+def test_configure_session_writes_permissions_when_allowed_tools_set(tmp_path):
+    provider = ClaudeCodeProvider(base_url="http://localhost:8000")
+    extra_env: dict[str, str] = {}
+    provider.configure_session("s1", str(tmp_path), extra_env, allowed_tools=["Read", "Bash"])
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    data = json.loads(settings_path.read_text())
+    assert data["permissions"]["allow"] == ["Read", "Bash"]
+    assert data["permissions"]["deny"] == ["*"]
+
+
+def test_configure_session_no_permissions_when_allowed_tools_none(tmp_path):
+    provider = ClaudeCodeProvider(base_url="http://localhost:8000")
+    extra_env: dict[str, str] = {}
+    provider.configure_session("s1", str(tmp_path), extra_env, allowed_tools=None)
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text())
+        assert "permissions" not in data
+
+
+def test_unconfigure_session_removes_permissions(tmp_path):
+    provider = ClaudeCodeProvider(base_url="http://localhost:8000")
+    extra_env: dict[str, str] = {}
+    provider.configure_session("s1", str(tmp_path), extra_env, allowed_tools=["Read"])
+    provider.unconfigure_session("s1", str(tmp_path))
+
+    settings_path = tmp_path / ".claude" / "settings.json"
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text())
+        assert "permissions" not in data

@@ -27,7 +27,8 @@ _HOOK_MARKER = "_harnessclaw"
 @runtime_checkable
 class ObservabilityProvider(Protocol):
     def configure_session(
-        self, session_id: str, working_dir: str, extra_env: dict[str, str]
+        self, session_id: str, working_dir: str, extra_env: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> None: ...
 
     def unconfigure_session(self, session_id: str, working_dir: str) -> None: ...
@@ -35,7 +36,8 @@ class ObservabilityProvider(Protocol):
 
 class NullProvider:
     def configure_session(
-        self, session_id: str, working_dir: str, extra_env: dict[str, str]
+        self, session_id: str, working_dir: str, extra_env: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> None:
         pass
 
@@ -63,7 +65,8 @@ class ClaudeCodeProvider:
         path.write_text(json.dumps(data, indent=2))
 
     def configure_session(
-        self, session_id: str, working_dir: str, extra_env: dict[str, str]
+        self, session_id: str, working_dir: str, extra_env: dict[str, str],
+        allowed_tools: list[str] | None = None,
     ) -> None:
         extra_env["HARNESS_SESSION_ID"] = session_id
         extra_env["HARNESS_BASE_URL"] = self._base_url
@@ -89,6 +92,12 @@ class ClaudeCodeProvider:
                 "hooks": [{"type": "command", "command": _POST_HOOK_CMD}],
             })
 
+        if allowed_tools is not None:
+            data["permissions"] = {
+                "allow": list(allowed_tools),
+                "deny": ["*"],
+            }
+
         self._write_settings(path, data)
 
     def unconfigure_session(self, session_id: str, working_dir: str) -> None:
@@ -106,6 +115,8 @@ class ClaudeCodeProvider:
 
         if not hooks:
             data.pop("hooks", None)
+
+        data.pop("permissions", None)
 
         if not data:
             path.unlink(missing_ok=True)
