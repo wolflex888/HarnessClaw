@@ -194,6 +194,15 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         if handler is not None:
             result = await handler(args)
         else:
+            # Fallthrough: route unknown tool names to tool_executor.
+            # Validate token and require tool:use scope before executing.
+            try:
+                subject, scopes = token_store.validate(token)
+            except Exception as e:
+                return JSONResponse({"error": f"Unauthorized: {e}"}, status_code=401)
+            decision = policy.check(subject=subject, scopes=scopes, operation="tool:use")
+            if not decision.allowed:
+                return JSONResponse({"error": f"Forbidden: {decision.reason}"}, status_code=403)
             result = await tool_executor.execute(tool, args)
         return JSONResponse(result)
     except Exception as e:
@@ -321,7 +330,7 @@ class ToolRegisterRequest(BaseModel):
     description: str
     input_schema: dict = {}
     output_schema: dict = {}
-    adapter: str
+    adapter: Literal["cli", "http", "mcp"]
     adapter_config: dict = {}
     cap_allowlist: list[str] = []
     allowed_roles: list[str] = []
@@ -582,7 +591,16 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
     handler = handlers.get(name)
     if handler is not None:
         return await handler(args)
-    # Fallthrough: route unknown tool names to tool_executor
+    # Fallthrough: route unknown tool names to tool_executor.
+    # Validate token and require tool:use scope before executing.
+    from harness_claw.gateway.auth import AuthError
+    try:
+        subject, scopes = token_store.validate(token)
+    except AuthError as e:
+        raise PermissionError(f"Unauthorized: {e}") from e
+    decision = policy.check(subject=subject, scopes=scopes, operation="tool:use")
+    if not decision.allowed:
+        raise PermissionError(f"Forbidden: {decision.reason}")
     return await tool_executor.execute(name, args)
 
 
@@ -594,6 +612,7 @@ def _build_mcp_server(token: str) -> MCPServer:
     except Exception:
         subject = None
 
+    # Agent tokens use session_id as their subject, so subject == session_id here
     session_tools = runner.get_session_tools(subject) if subject is not None else []
     dynamic_tools = [
         mcp_types.Tool(

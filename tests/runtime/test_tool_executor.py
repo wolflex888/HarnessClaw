@@ -99,6 +99,38 @@ async def test_raises_value_error_for_unknown_adapter(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_raises_validation_error_on_bad_output(tmp_path):
+    from jsonschema import ValidationError
+    # Tool with strict output schema requiring "result" field
+    tool = make_tool(
+        adapter="cli",
+        adapter_config={"command": "echo hello", "timeout": 5},
+        input_schema={"type": "object"},
+        output_schema={
+            "type": "object",
+            "properties": {"result": {"type": "string"}},
+            "required": ["result"],
+        },
+    )
+    executor = make_executor(tmp_path, [tool])
+    # CLI returns {stdout, stderr, exit_code} which doesn't match output_schema
+    with pytest.raises(ValidationError):
+        await executor.execute("echo_tool", {})
+
+
+@pytest.mark.asyncio
+async def test_cli_timeout_raises_timeout_error(tmp_path):
+    tool = make_tool(
+        adapter_config={"command": "sleep 10", "timeout": 0.1},
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+    )
+    executor = make_executor(tmp_path, [tool])
+    with pytest.raises(TimeoutError):
+        await executor.execute("echo_tool", {})
+
+
+@pytest.mark.asyncio
 async def test_http_adapter_posts_to_url(tmp_path):
     import httpx
     tool = make_tool(

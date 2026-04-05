@@ -60,6 +60,7 @@ class ToolExecutor:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
+            await proc.wait()
             raise TimeoutError(f"Tool {tool.id!r} timed out after {timeout}s")
         return {
             "stdout": stdout.decode(),
