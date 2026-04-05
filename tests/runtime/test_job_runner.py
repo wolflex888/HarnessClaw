@@ -11,6 +11,8 @@ from harness_claw.runtime.session_store import SessionStore
 from harness_claw.gateway.task_store import Task, TaskStore
 from harness_claw.gateway.broker import Broker
 from harness_claw.runtime.limit_enforcer import LimitEnforcer
+from harness_claw.gateway.tool_registry import ToolRegistry
+from harness_claw.gateway.tool_store import ToolDef
 
 
 def make_session(**kwargs) -> Session:
@@ -161,6 +163,7 @@ async def test_pause_session_marks_task_paused():
     runner._obs_provider = MagicMock()
     runner._broadcast = AsyncMock()
     runner._limit_enforcers = {}
+    runner._session_tools = {}
     runner._senders = set()
 
     await runner.pause_session("s1", "cost", "Cost $0.51 exceeded limit $0.50")
@@ -170,3 +173,58 @@ async def test_pause_session_marks_task_paused():
     assert reloaded.pause_reason == "Cost $0.51 exceeded limit $0.50"
     assert reloaded.resume is True
     broker.scheduler.push.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_tools_returns_visible_tools():
+    """get_session_tools returns role-visible tools after start_session."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    tool = ToolDef(
+        id="run_tests",
+        name="Run Tests",
+        description="Runs the test suite",
+        input_schema={"type": "object", "properties": {}},
+        output_schema={"type": "object"},
+        adapter="cli",
+        adapter_config={},
+        cap_allowlist=["python"],
+        allowed_roles=[],
+        required_scopes=[],
+        metadata={},
+        created_at=now,
+        updated_at=now,
+    )
+
+    tool_store = MagicMock()
+    tool_store.list.return_value = [tool]
+    tool_registry = ToolRegistry(tool_store)
+
+    registry = MagicMock(spec=RoleRegistry)
+    role = MagicMock()
+    role.provider = "claude-code"
+    role.system_prompt = "You are helpful."
+    role.model = "claude-sonnet-4-6"
+    role.scopes = ["agent:list"]
+    role.caps = ["python"]
+    role.id = "assistant"
+    role.allowed_tools = []
+    registry.get.return_value = role
+
+    store = MagicMock(spec=SessionStore)
+    session = make_session(session_id="s1")
+    store.get.return_value = session
+
+    runner = JobRunner(registry, store, tool_registry=tool_registry)
+
+    with patch("harness_claw.runtime.job_runner.PtySession") as MockPty:
+        mock_pty = MagicMock()
+        mock_pty.start = AsyncMock()
+        MockPty.return_value = mock_pty
+
+        with patch("harness_claw.runtime.job_runner.CostPoller"):
+            await runner.start_session(session)
+
+    result = runner.get_session_tools("s1")
+    assert len(result) == 1
+    assert result[0].id == "run_tests"

@@ -17,6 +17,8 @@ from harness_claw.session import Session
 from harness_claw.runtime.session_store import SessionStore
 from harness_claw.observability.store import AgentObservabilityStore
 from harness_claw.observability.provider import ObservabilityProvider, NullProvider
+from harness_claw.gateway.tool_registry import ToolRegistry
+from harness_claw.gateway.tool_store import ToolDef
 
 _logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ class JobRunner:
         mcp_base_url: str = "http://localhost:8000",
         obs_store: AgentObservabilityStore | None = None,
         obs_provider: ObservabilityProvider | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._registry = registry
         self._store = store
@@ -51,11 +54,13 @@ class JobRunner:
         self._mcp_base_url = mcp_base_url
         self._obs_store = obs_store if obs_store is not None else AgentObservabilityStore()
         self._obs_provider = obs_provider if obs_provider is not None else NullProvider()
+        self._tool_registry = tool_registry
         self._pty_sessions: dict[str, PtySession] = {}
         self._cost_pollers: dict[str, CostPoller] = {}
         self._session_tokens: dict[str, str] = {}  # session_id → token
         self._obs_working_dirs: dict[str, str] = {}  # session_id → working_dir for obs cleanup
         self._limit_enforcers: dict[str, LimitEnforcer] = {}
+        self._session_tools: dict[str, list[ToolDef]] = {}
         self._senders: set[Send] = set()
         self._pty_callback_handler_factory: Any | None = None
 
@@ -105,6 +110,10 @@ class JobRunner:
         })
         return ["--mcp-config", config]
 
+    def get_session_tools(self, session_id: str) -> list[ToolDef]:
+        """Return the registered tools visible to the agent in this session."""
+        return self._session_tools.get(session_id, [])
+
     async def start_session(self, session: Session) -> None:
         session_id = session.session_id
 
@@ -116,6 +125,12 @@ class JobRunner:
         if role is None:
             _logger.error("start_session: role %r not found for session %s", session.role_id, session_id)
             return
+
+        if self._tool_registry is not None:
+            visible_tools = self._tool_registry.get_visible_tools(role)
+            self._session_tools[session_id] = visible_tools
+        else:
+            self._session_tools[session_id] = []
 
         _logger.info("Starting PTY session %s (role=%s, provider=%s)", session_id, session.role_id, role.provider)
 
@@ -240,6 +255,7 @@ class JobRunner:
         if poller:
             poller.stop()
         self._limit_enforcers.pop(session_id, None)
+        self._session_tools.pop(session_id, None)
         # Revoke token
         if self._token_store is not None:
             token = self._session_tokens.pop(session_id, None)

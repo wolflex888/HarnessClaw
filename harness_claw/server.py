@@ -97,6 +97,7 @@ runner = JobRunner(
     mcp_base_url="http://localhost:8000",
     obs_store=obs_store,
     obs_provider=obs_provider,
+    tool_registry=tool_registry,
 )
 
 
@@ -588,9 +589,24 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
 def _build_mcp_server(token: str) -> MCPServer:
     server = MCPServer("harnessclaw")
 
+    try:
+        subject, _ = token_store.validate(token)
+    except Exception:
+        subject = None
+
+    session_tools = runner.get_session_tools(subject) if subject is not None else []
+    dynamic_tools = [
+        mcp_types.Tool(
+            name=t.id,
+            description=t.description,
+            inputSchema=t.input_schema,
+        )
+        for t in session_tools
+    ]
+
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        return _MCP_TOOLS
+        return _MCP_TOOLS + dynamic_tools
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict | None) -> list[mcp_types.TextContent]:
