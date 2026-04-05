@@ -27,6 +27,7 @@ function statusBadge(status: TaskRecord['status']) {
   if (status === 'running') return '● Running'
   if (status === 'completed') return '✓ Done'
   if (status === 'failed') return '✕ Failed'
+  if (status === 'paused') return '⏸ Paused'
   return '◌ Queued'
 }
 
@@ -34,6 +35,7 @@ function statusColor(status: TaskRecord['status']) {
   if (status === 'running') return 'text-blue-400'
   if (status === 'completed') return 'text-green-400'
   if (status === 'failed') return 'text-red-400'
+  if (status === 'paused') return 'text-yellow-400'
   return 'text-gray-500'
 }
 
@@ -90,13 +92,14 @@ function TaskTerminalPanel({ sessionId, terminalWriters }: {
   )
 }
 
-function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry }: {
+function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry, onResume }: {
   task: TaskRecord
   sessions: Record<string, SessionState>
   terminalWriters: MutableRefObject<Record<string, (data: Uint8Array) => void>>
   expanded: boolean
   onToggle: () => void
   onRetry: (taskId: string) => void
+  onResume: (taskId: string) => void
 }) {
   const agentSession = sessions[task.delegated_to]
   const agentName = agentSession?.name || task.delegated_to.slice(0, 8)
@@ -128,20 +131,33 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry 
             <span>caps: {task.caps_requested.join(', ')}</span>
             {task.progress_msg && <span>{task.progress_msg}</span>}
           </div>
+          {task.pause_reason && (
+            <p className="text-xs text-yellow-400 mt-1">{task.pause_reason}</p>
+          )}
           <TaskTerminalPanel sessionId={task.delegated_to} terminalWriters={terminalWriters} />
           {task.result && (
             <div className={`text-xs bg-gray-800 rounded p-2 whitespace-pre-wrap ${task.status === 'failed' ? 'text-red-400' : 'text-green-400'}`}>
               {typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}
             </div>
           )}
-          {task.status === 'failed' && (
-            <button
-              onClick={() => onRetry(task.task_id)}
-              className="self-start text-xs text-yellow-400 hover:text-yellow-300 px-2 py-1 border border-yellow-800 rounded"
-            >
-              ↺ Retry
-            </button>
-          )}
+          <div className="flex gap-2">
+            {task.status === 'failed' && (
+              <button
+                onClick={() => onRetry(task.task_id)}
+                className="self-start text-xs text-yellow-400 hover:text-yellow-300 px-2 py-1 border border-yellow-800 rounded"
+              >
+                ↺ Retry
+              </button>
+            )}
+            {task.status === 'paused' && (
+              <button
+                onClick={() => onResume(task.task_id)}
+                className="self-start text-xs px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-400 text-black font-medium"
+              >
+                Resume
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -159,6 +175,10 @@ export function TasksTab({ tasks, sessions, terminalWriters, onInput: _onInput, 
       return next
     })
   }, [])
+
+  const resumeTask = async (taskId: string) => {
+    await fetch(`/api/tasks/${taskId}/resume`, { method: 'POST' })
+  }
 
   if (tasks.length === 0) {
     return (
@@ -179,6 +199,7 @@ export function TasksTab({ tasks, sessions, terminalWriters, onInput: _onInput, 
           expanded={expandedIds.has(task.task_id)}
           onToggle={() => toggle(task.task_id)}
           onRetry={onRetry}
+          onResume={resumeTask}
         />
       ))}
     </div>

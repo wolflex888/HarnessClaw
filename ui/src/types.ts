@@ -47,7 +47,7 @@ export interface TaskRecord {
   delegated_to: string
   instructions: string
   caps_requested: string[]
-  status: 'queued' | 'running' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'paused'
   progress_pct: number
   progress_msg: string
   result: string | Record<string, unknown> | null
@@ -57,6 +57,11 @@ export interface TaskRecord {
   updated_at: string
   priority?: number
   resume?: boolean
+  max_cost?: number | null
+  max_time?: number | null
+  allowed_tools?: string[] | null
+  provider_session_id?: string | null
+  pause_reason?: string | null
 }
 
 export interface ToolEvent {
