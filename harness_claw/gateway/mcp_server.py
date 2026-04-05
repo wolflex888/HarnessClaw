@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from harness_claw.gateway.audit import AuditEvent, AuditLogger
 from harness_claw.gateway.auth import AuthError, TokenStore
 from harness_claw.gateway.broker import Broker
 from harness_claw.gateway.capability import CapabilityConnector
+from harness_claw.gateway.event_bus import EventBus
 from harness_claw.gateway.memory import MemoryStore
 from harness_claw.gateway.policy import PolicyEngine
+from harness_claw.runtime.plan_executor import PlanExecutor
 
 
 class PermissionError(Exception):
@@ -31,6 +34,7 @@ class GatewayMCP:
         audit: AuditLogger,
         spawn_callback: Any | None = None,
         workflow_engine: Any | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._tokens = token_store
         self._policy = policy
@@ -40,6 +44,7 @@ class GatewayMCP:
         self._audit = audit
         self._spawn_callback = spawn_callback  # async (role_id, working_dir) → session_id
         self._workflow_engine = workflow_engine
+        self._event_bus = event_bus
 
     def _auth(self, token: str, operation: str) -> str:
         """Validate token and check scope. Returns subject. Raises on failure."""
@@ -178,6 +183,35 @@ class GatewayMCP:
             outcome="allowed", details={"run_id": run_id},
         ))
         return {"run_id": run_id}
+
+    async def execute_plan(self, token: str, plan_path: str) -> str:
+        subject = self._auth(token, "agent:delegate")
+
+        if not Path(plan_path).exists():
+            raise FileNotFoundError(f"Plan file not found: {plan_path!r}")
+
+        if self._event_bus is None:
+            raise RuntimeError("execute_plan requires event_bus — not configured")
+
+        progress_log: list[str] = []
+
+        async def on_progress(msg: str) -> None:
+            progress_log.append(msg)
+
+        executor = PlanExecutor(
+            broker=self._broker,
+            event_bus=self._event_bus,
+            on_progress=on_progress,
+        )
+
+        self._audit.log(AuditEvent(
+            subject=subject, operation="execute_plan", resource=plan_path,
+            outcome="allowed", details={"plan_path": plan_path},
+        ))
+
+        summary = await executor.execute(plan_path)
+        progress_output = "\n".join(progress_log)
+        return f"{progress_output}\n\n---\n\n{summary}"
 
     # --- Memory tools ---
 

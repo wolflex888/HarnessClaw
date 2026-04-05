@@ -76,6 +76,7 @@ gateway_mcp = GatewayMCP(
     memory=memory,
     audit=audit,
     workflow_engine=workflow_engine,
+    event_bus=event_bus,
 )
 
 runner = JobRunner(
@@ -175,6 +176,7 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         "memory.delete": lambda a: gateway_mcp.memory_delete(token=token, **a),
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
+        "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
     }
 
     handler = handlers.get(tool)
@@ -393,6 +395,7 @@ def get_mcp_tools() -> list[dict[str, str]]:
         {"name": "memory.delete", "description": "Delete a key from a namespace"},
         {"name": "memory.tag", "description": "Add tags to a memory entry"},
         {"name": "workflow.run", "description": "Start a named workflow by ID with an input string; returns run_id"},
+        {"name": "execute_plan", "description": "Execute a plan file end-to-end using code-writer, spec-reviewer, and code-reviewer agents"},
     ]
 
 
@@ -457,6 +460,10 @@ _MCP_TOOLS = [
         inputSchema={"type": "object", "properties": {
             "workflow_id": {"type": "string"}, "input": {"type": "string"},
         }, "required": ["workflow_id", "input"]}),
+    mcp_types.Tool(name="execute_plan", description="Execute a plan file end-to-end: code-writer implements each task, spec-reviewer and code-reviewer review in parallel, findings loop back until both approve",
+        inputSchema={"type": "object", "properties": {
+            "plan_path": {"type": "string", "description": "Path to a plan markdown file produced by superpowers:writing-plans"},
+        }, "required": ["plan_path"]}),
 ]
 
 
@@ -476,6 +483,7 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
         "memory.delete": lambda a: gateway_mcp.memory_delete(token=token, **a),
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
+        "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
     }
     handler = handlers.get(name)
     if handler is None:
