@@ -153,3 +153,46 @@ def test_mark_interrupted_as_queued(tmp_path):
     assert store.get("q1").status == "queued"
     assert store.get("r1").status == "queued"
     assert store.get("c1").status == "completed"  # unchanged
+
+
+def test_task_limit_field_defaults():
+    task = make_task()
+    assert task.max_cost is None
+    assert task.max_time is None
+    assert task.allowed_tools is None
+    assert task.provider_session_id is None
+    assert task.pause_reason is None
+
+
+def test_task_limit_fields_in_to_dict():
+    task = make_task()
+    task.max_cost = 0.5
+    task.max_time = 3600
+    task.allowed_tools = ["Read", "Bash"]
+    task.provider_session_id = "abc123"
+    task.pause_reason = "Cost $0.52 exceeded limit $0.50"
+    d = task.to_dict()
+    assert d["max_cost"] == 0.5
+    assert d["max_time"] == 3600
+    assert d["allowed_tools"] == ["Read", "Bash"]
+    assert d["provider_session_id"] == "abc123"
+    assert d["pause_reason"] == "Cost $0.52 exceeded limit $0.50"
+
+
+def test_sqlite_roundtrip_limit_fields(tmp_path):
+    store = SqliteTaskStore(tmp_path / "tasks.db")
+    task = make_task(task_id="t1")
+    task.max_cost = 1.0
+    task.max_time = 60
+    task.allowed_tools = ["Read"]
+    task.provider_session_id = "sess-abc"
+    task.pause_reason = "Time 61s exceeded limit 60s"
+    task.status = "paused"
+    store.save(task)
+    loaded = store.get("t1")
+    assert loaded.max_cost == 1.0
+    assert loaded.max_time == 60
+    assert loaded.allowed_tools == ["Read"]
+    assert loaded.provider_session_id == "sess-abc"
+    assert loaded.pause_reason == "Time 61s exceeded limit 60s"
+    assert loaded.status == "paused"

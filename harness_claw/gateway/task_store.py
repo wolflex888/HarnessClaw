@@ -16,7 +16,7 @@ class Task:
     instructions: str
     caps_requested: list[str]
     context: dict[str, Any] | None = None
-    status: str = "queued"       # queued | running | completed | failed
+    status: str = "queued"       # queued | running | completed | failed | paused
     progress_pct: int = 0
     progress_msg: str = ""
     result: dict[str, Any] | str | None = None
@@ -25,6 +25,11 @@ class Task:
     callback: bool = False
     priority: int = 2
     resume: bool = False
+    max_cost: float | None = None
+    max_time: int | None = None
+    allowed_tools: list[str] | None = None
+    provider_session_id: str | None = None
+    pause_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +48,11 @@ class Task:
             "callback": self.callback,
             "priority": self.priority,
             "resume": self.resume,
+            "max_cost": self.max_cost,
+            "max_time": self.max_time,
+            "allowed_tools": self.allowed_tools,
+            "provider_session_id": self.provider_session_id,
+            "pause_reason": self.pause_reason,
         }
 
 
@@ -86,27 +96,37 @@ class TaskStore:
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS tasks (
-    task_id        TEXT PRIMARY KEY,
-    delegated_by   TEXT NOT NULL,
-    delegated_to   TEXT NOT NULL,
-    instructions   TEXT NOT NULL,
-    caps_requested TEXT NOT NULL,
-    context        TEXT,
-    status         TEXT NOT NULL,
-    progress_pct   INTEGER NOT NULL DEFAULT 0,
-    progress_msg   TEXT NOT NULL DEFAULT '',
-    result         TEXT,
-    callback       INTEGER NOT NULL DEFAULT 0,
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL,
-    priority       INTEGER NOT NULL DEFAULT 2,
-    resume         INTEGER NOT NULL DEFAULT 0
+    task_id            TEXT PRIMARY KEY,
+    delegated_by       TEXT NOT NULL,
+    delegated_to       TEXT NOT NULL,
+    instructions       TEXT NOT NULL,
+    caps_requested     TEXT NOT NULL,
+    context            TEXT,
+    status             TEXT NOT NULL,
+    progress_pct       INTEGER NOT NULL DEFAULT 0,
+    progress_msg       TEXT NOT NULL DEFAULT '',
+    result             TEXT,
+    callback           INTEGER NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    priority           INTEGER NOT NULL DEFAULT 2,
+    resume             INTEGER NOT NULL DEFAULT 0,
+    max_cost           REAL,
+    max_time           INTEGER,
+    allowed_tools      TEXT,
+    provider_session_id TEXT,
+    pause_reason       TEXT
 )
 """
 
 _MIGRATE_SQL = [
     "ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 2",
     "ALTER TABLE tasks ADD COLUMN resume   INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE tasks ADD COLUMN max_cost           REAL",
+    "ALTER TABLE tasks ADD COLUMN max_time           INTEGER",
+    "ALTER TABLE tasks ADD COLUMN allowed_tools      TEXT",
+    "ALTER TABLE tasks ADD COLUMN provider_session_id TEXT",
+    "ALTER TABLE tasks ADD COLUMN pause_reason       TEXT",
 ]
 
 
@@ -137,6 +157,11 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         updated_at=row["updated_at"],
         priority=row["priority"] if "priority" in keys else 2,
         resume=bool(row["resume"]) if "resume" in keys else False,
+        max_cost=row["max_cost"] if "max_cost" in keys else None,
+        max_time=row["max_time"] if "max_time" in keys else None,
+        allowed_tools=json.loads(row["allowed_tools"]) if row["allowed_tools"] else None,
+        provider_session_id=row["provider_session_id"] if "provider_session_id" in keys else None,
+        pause_reason=row["pause_reason"] if "pause_reason" in keys else None,
     )
 
 
@@ -168,17 +193,23 @@ class SqliteTaskStore:
                 INSERT INTO tasks
                     (task_id, delegated_by, delegated_to, instructions, caps_requested,
                      context, status, progress_pct, progress_msg, result, callback,
-                     created_at, updated_at, priority, resume)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     created_at, updated_at, priority, resume,
+                     max_cost, max_time, allowed_tools, provider_session_id, pause_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
-                    status       = excluded.status,
-                    progress_pct = excluded.progress_pct,
-                    progress_msg = excluded.progress_msg,
-                    result       = excluded.result,
-                    callback     = excluded.callback,
-                    updated_at   = excluded.updated_at,
-                    priority     = excluded.priority,
-                    resume       = excluded.resume
+                    status              = excluded.status,
+                    progress_pct        = excluded.progress_pct,
+                    progress_msg        = excluded.progress_msg,
+                    result              = excluded.result,
+                    callback            = excluded.callback,
+                    updated_at          = excluded.updated_at,
+                    priority            = excluded.priority,
+                    resume              = excluded.resume,
+                    max_cost            = excluded.max_cost,
+                    max_time            = excluded.max_time,
+                    allowed_tools       = excluded.allowed_tools,
+                    provider_session_id = excluded.provider_session_id,
+                    pause_reason        = excluded.pause_reason
                 """,
                 (
                     task.task_id, task.delegated_by, task.delegated_to, task.instructions,
@@ -188,6 +219,11 @@ class SqliteTaskStore:
                     result_json, int(task.callback),
                     task.created_at, task.updated_at,
                     task.priority, int(task.resume),
+                    task.max_cost,
+                    task.max_time,
+                    json.dumps(task.allowed_tools) if task.allowed_tools is not None else None,
+                    task.provider_session_id,
+                    task.pause_reason,
                 ),
             )
 
