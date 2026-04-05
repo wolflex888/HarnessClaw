@@ -147,7 +147,10 @@ class PlanExecutor:
         await done.wait()
         await self._event_bus.unsubscribe(sub_ok)
         await self._event_bus.unsubscribe(sub_fail)
-        return self._broker.get_task(task_id)
+        task = self._broker.get_task(task_id)
+        if task is None:
+            raise RuntimeError(f"Task {task_id!r} disappeared from broker after completion event")
+        return task
 
     def _extract_summary(self, result: Any) -> str:
         if isinstance(result, dict):
@@ -171,12 +174,12 @@ class PlanExecutor:
             "summary": text,
         }
 
-    def _spec_review_prompt(
-        self, task: PlanTask, impl_summary: str,
+    def _review_prompt(
+        self, review_type: str, task: PlanTask, impl_summary: str,
         prev_findings: list | None, round_num: int,
     ) -> str:
         parts = [
-            f"## Spec Review — {task.title}\n",
+            f"## {review_type} — {task.title}\n",
             "### Task Spec\n",
             task.full_text,
             "\n### Implementation Summary\n",
@@ -193,27 +196,11 @@ class PlanExecutor:
         )
         return "\n".join(parts)
 
-    def _quality_review_prompt(
-        self, task: PlanTask, impl_summary: str,
-        prev_findings: list | None, round_num: int,
-    ) -> str:
-        parts = [
-            f"## Code Quality Review — {task.title}\n",
-            "### Task Spec\n",
-            task.full_text,
-            "\n### Implementation Summary\n",
-            impl_summary,
-        ]
-        if prev_findings and round_num > 1:
-            parts += [
-                f"\n### Your Previous Review (Round {round_num - 1})\n",
-                json.dumps(prev_findings, indent=2),
-                "\nCheck whether these findings were addressed, and look for anything new.",
-            ]
-        parts.append(
-            '\n\nReturn JSON: {"verdict": "APPROVE"|"REVISE", "summary": "...", "findings": [...]}'
-        )
-        return "\n".join(parts)
+    def _spec_review_prompt(self, task, impl_summary, prev_findings, round_num):
+        return self._review_prompt("Spec Review", task, impl_summary, prev_findings, round_num)
+
+    def _quality_review_prompt(self, task, impl_summary, prev_findings, round_num):
+        return self._review_prompt("Code Quality Review", task, impl_summary, prev_findings, round_num)
 
     def _rewrite_prompt(self, task: PlanTask, aggregated_findings: str) -> str:
         return f"""## Rewrite — {task.title}
