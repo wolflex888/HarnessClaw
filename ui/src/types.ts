@@ -126,6 +126,22 @@ export interface WorkflowRun {
   updated_at: string
 }
 
+export interface ToolDef {
+  id: string;
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  adapter: 'cli' | 'http' | 'mcp';
+  adapter_config: Record<string, unknown>;
+  cap_allowlist: string[];
+  allowed_roles: string[];
+  required_scopes: string[];
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 // WebSocket: client → server
 export type WSSend =
   | { type: 'input'; session_id: string; data: string }

@@ -12,6 +12,7 @@ import { ToolsTab } from './components/ToolsTab'
 import { MemoryTab } from './components/MemoryTab'
 import { AuditTab } from './components/AuditTab'
 import { WorkflowsTab } from './components/WorkflowsTab'
+import { RegisteredToolsTab } from './components/RegisteredToolsTab'
 
 function emptySessionState(data: {
   session_id: string; role_id: string; working_dir: string; model: string;
@@ -290,6 +291,7 @@ export default function App() {
                       onRunWorkflow={handleRunWorkflow}
                     />
                   )}
+                  {tab === 'registered-tools' && <RegisteredToolsTab />}
                 </>
               )}
             </TabPanel>
