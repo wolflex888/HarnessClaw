@@ -77,7 +77,7 @@ class RoleRegistry:
                 caps=list(item.get("caps", [])),
                 max_cost=item.get("max_cost"),
                 max_time=item.get("max_time"),
-                allowed_tools=list(item["allowed_tools"]) if item.get("allowed_tools") else None,
+                allowed_tools=list(item["allowed_tools"]) if "allowed_tools" in item else None,
             )
             self._roles[role.id] = role
 
