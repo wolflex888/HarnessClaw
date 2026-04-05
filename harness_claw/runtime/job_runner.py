@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 from harness_claw.runtime.cost_poller import CostPoller, _encode_cwd
+from harness_claw.runtime.limit_enforcer import LimitEnforcer
 from harness_claw.runtime.pty_session import PtySession
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
@@ -54,6 +55,7 @@ class JobRunner:
         self._cost_pollers: dict[str, CostPoller] = {}
         self._session_tokens: dict[str, str] = {}  # session_id → token
         self._obs_working_dirs: dict[str, str] = {}  # session_id → working_dir for obs cleanup
+        self._limit_enforcers: dict[str, LimitEnforcer] = {}
         self._senders: set[Send] = set()
         self._pty_callback_handler_factory: Any | None = None
 
@@ -198,10 +200,23 @@ class JobRunner:
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                 })
+                # Check limits
+                lim = self._limit_enforcers.get(sid)
+                if lim is not None:
+                    lim.check_cost(cost)
+                    lim.check_time()
 
             poller = CostPoller(session_id, session.working_dir, on_cost_update, obs_store=self._obs_store)
             poller.start()
             self._cost_pollers[session_id] = poller
+
+            enforcer = LimitEnforcer(
+                session_id=session_id,
+                max_cost=role.max_cost,
+                max_time=role.max_time,
+                on_exceeded=lambda r, d, sid=session_id: self.pause_session(sid, r, d),
+            )
+            self._limit_enforcers[session_id] = enforcer
 
     def write(self, session_id: str, data: bytes) -> None:
         pty = self._pty_sessions.get(session_id)
@@ -221,6 +236,7 @@ class JobRunner:
         poller = self._cost_pollers.pop(session_id, None)
         if poller:
             poller.stop()
+        self._limit_enforcers.pop(session_id, None)
         # Revoke token
         if self._token_store is not None:
             token = self._session_tokens.pop(session_id, None)
@@ -245,6 +261,40 @@ class JobRunner:
         if working_dir:
             self._obs_provider.unconfigure_session(session_id, working_dir)
         self._obs_store.remove_session(session_id)
+
+    async def pause_session(self, session_id: str, reason: str, detail: str) -> None:
+        """Kill a session and mark its running task as paused (resumable)."""
+        # Capture provider_session_id before killing (kill_session stops the poller)
+        poller = self._cost_pollers.get(session_id)
+        provider_session_id = poller.provider_session_id if poller else None
+
+        # Find the task running on this session
+        task = next(
+            (t for t in self._broker.list_tasks()
+             if t.delegated_to == session_id and t.status == "running"),
+            None,
+        )
+
+        self.kill_session(session_id)
+        self._limit_enforcers.pop(session_id, None)
+
+        if task is not None:
+            task.status = "paused"
+            task.pause_reason = detail
+            task.resume = True
+            if provider_session_id:
+                task.provider_session_id = provider_session_id
+            self._broker._store.save(task)
+            self._broker.scheduler.push(task)
+            try:
+                import asyncio
+                asyncio.create_task(self._broker._notify("task.updated", task))
+            except RuntimeError:
+                pass
+            await self._broadcast({
+                "type": "task.updated",
+                "task": task.to_dict(),
+            })
 
     def delete_session(self, session_id: str) -> None:
         _logger.info("Deleting session %s", session_id)

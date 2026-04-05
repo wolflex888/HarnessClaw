@@ -8,6 +8,9 @@ from harness_claw.runtime.job_runner import JobRunner
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.session import Session
 from harness_claw.runtime.session_store import SessionStore
+from harness_claw.gateway.task_store import Task, TaskStore
+from harness_claw.gateway.broker import Broker
+from harness_claw.runtime.limit_enforcer import LimitEnforcer
 
 
 def make_session(**kwargs) -> Session:
@@ -117,3 +120,53 @@ async def test_broadcast_output_to_all_senders():
     assert len(received_a) == 1
     assert len(received_b) == 1
     assert received_a[0]["data"] == "abc"
+
+
+def make_running_task(session_id: str) -> Task:
+    return Task(
+        task_id="t1",
+        delegated_by="orch",
+        delegated_to=session_id,
+        instructions="do it",
+        caps_requested=["python"],
+        status="running",
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_session_marks_task_paused():
+    store = TaskStore()
+    task = make_running_task("s1")
+    store.save(task)
+
+    broker = MagicMock()
+    broker.list_tasks.return_value = [task]
+    broker.scheduler = MagicMock()
+    broker._store = store
+    broker._notify = AsyncMock()
+
+    from harness_claw.runtime.job_runner import JobRunner
+    runner = JobRunner.__new__(JobRunner)
+    runner._broker = broker
+    runner._pty_sessions = {}
+    runner._cost_pollers = {}
+    runner._session_tokens = {}
+    runner._token_store = None
+    runner._connector = None
+    runner._dispatcher = None
+    runner._obs_working_dirs = {}
+    runner._store = MagicMock()
+    runner._store.get.return_value = None
+    runner._obs_store = MagicMock()
+    runner._obs_provider = MagicMock()
+    runner._broadcast = AsyncMock()
+    runner._limit_enforcers = {}
+    runner._senders = set()
+
+    await runner.pause_session("s1", "cost", "Cost $0.51 exceeded limit $0.50")
+
+    reloaded = store.get("t1")
+    assert reloaded.status == "paused"
+    assert reloaded.pause_reason == "Cost $0.51 exceeded limit $0.50"
+    assert reloaded.resume is True
+    broker.scheduler.push.assert_called_once()
