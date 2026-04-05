@@ -23,12 +23,15 @@ from harness_claw.gateway.memory import SqliteMemoryStore
 from harness_claw.gateway.task_store import SqliteTaskStore
 from harness_claw.gateway.mcp_server import GatewayMCP
 from harness_claw.gateway.policy import LocalPolicyEngine
+from harness_claw.gateway.tool_store import SqliteToolStore, ToolDef
+from harness_claw.gateway.tool_registry import ToolRegistry
 from harness_claw.gateway.workflow_engine import WorkflowEngine
 from harness_claw.role_registry import RoleRegistry
 from harness_claw.observability.store import AgentObservabilityStore
 from harness_claw.observability.provider import ClaudeCodeProvider
 from harness_claw.runtime.job_runner import JobRunner
 from harness_claw.runtime.session_store import SessionStore
+from harness_claw.runtime.tool_executor import ToolExecutor
 from harness_claw.api import sessions as sessions_api
 from harness_claw.api import roles as roles_api
 from harness_claw.api import websocket as ws_api
@@ -40,6 +43,7 @@ _audit_jsonl = _root / "audit.jsonl"
 _memory_db = _root / "memory.db"
 _tasks_db = _root / "tasks.db"
 _workflows_db = _root / "workflows.db"
+_tools_db = _root / "tools.db"
 
 # --- Shared state ---
 registry = RoleRegistry(_agents_yaml)
@@ -58,6 +62,9 @@ event_bus = LocalEventBus()
 task_store = SqliteTaskStore(_tasks_db)
 broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
 memory = SqliteMemoryStore(_memory_db)
+tool_store = SqliteToolStore(_tools_db)
+tool_registry = ToolRegistry(tool_store)
+tool_executor = ToolExecutor(tool_registry)
 audit = AuditLogger(_audit_jsonl)
 obs_store = AgentObservabilityStore()
 obs_provider = ClaudeCodeProvider(base_url="http://localhost:8000")
@@ -77,6 +84,7 @@ gateway_mcp = GatewayMCP(
     audit=audit,
     workflow_engine=workflow_engine,
     event_bus=event_bus,
+    tool_registry=tool_registry,
 )
 
 runner = JobRunner(
@@ -177,14 +185,16 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
         "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
+        "tool.register": lambda a: gateway_mcp.tool_register(token=token, **a),
     }
 
     handler = handlers.get(tool)
-    if handler is None:
-        return JSONResponse({"error": f"unknown tool {tool!r}"}, status_code=404)
     try:
-        result = await handler(args)
-        return JSONResponse({"result": result})
+        if handler is not None:
+            result = await handler(args)
+        else:
+            result = await tool_executor.execute(tool, args)
+        return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -304,6 +314,20 @@ class WorkflowRunRequest(BaseModel):
     initiated_by: str = "dashboard"
 
 
+class ToolRegisterRequest(BaseModel):
+    id: str
+    name: str
+    description: str
+    input_schema: dict = {}
+    output_schema: dict = {}
+    adapter: str
+    adapter_config: dict = {}
+    cap_allowlist: list[str] = []
+    allowed_roles: list[str] = []
+    required_scopes: list[str] = []
+    metadata: dict = {}
+
+
 @app.get("/api/workflows")
 def list_workflows() -> list[dict[str, Any]]:
     return [d.to_dict() for d in workflow_engine.list_definitions()]
@@ -343,6 +367,50 @@ def get_audit(limit: int = 100) -> list[dict[str, Any]]:
     lines = _audit_jsonl.read_text().strip().splitlines()
     events = [json.loads(l) for l in lines[-limit:]]
     return list(reversed(events))
+
+
+# Tool REST endpoints
+@app.get("/api/tools")
+async def list_tools() -> list[dict]:
+    return [t.to_dict() for t in tool_registry.list()]
+
+
+@app.post("/api/tools", status_code=201)
+async def register_tool(body: ToolRegisterRequest) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    tool = ToolDef(
+        id=body.id,
+        name=body.name,
+        description=body.description,
+        input_schema=body.input_schema,
+        output_schema=body.output_schema,
+        adapter=body.adapter,
+        adapter_config=body.adapter_config,
+        cap_allowlist=body.cap_allowlist,
+        allowed_roles=body.allowed_roles,
+        required_scopes=body.required_scopes,
+        metadata=body.metadata,
+        created_at=now,
+        updated_at=now,
+    )
+    tool_registry.save(tool)
+    return tool.to_dict()
+
+
+@app.get("/api/tools/{tool_id}")
+async def get_tool(tool_id: str) -> dict:
+    tool = tool_registry.get(tool_id)
+    if tool is None:
+        raise HTTPException(status_code=404, detail=f"Tool {tool_id!r} not found")
+    return tool.to_dict()
+
+
+@app.delete("/api/tools/{tool_id}")
+async def delete_tool(tool_id: str) -> dict:
+    deleted = tool_registry.delete(tool_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Tool {tool_id!r} not found")
+    return {"deleted": True}
 
 
 # Memory REST endpoints (for dashboard)
@@ -396,6 +464,7 @@ def get_mcp_tools() -> list[dict[str, str]]:
         {"name": "memory.tag", "description": "Add tags to a memory entry"},
         {"name": "workflow.run", "description": "Start a named workflow by ID with an input string; returns run_id"},
         {"name": "execute_plan", "description": "Execute a plan file end-to-end using code-writer, spec-reviewer, and code-reviewer agents"},
+        {"name": "tool.register", "description": "Register or update an executable tool in the tool registry"},
     ]
 
 
@@ -464,6 +533,29 @@ _MCP_TOOLS = [
         inputSchema={"type": "object", "properties": {
             "plan_path": {"type": "string", "description": "Path to a plan markdown file produced by superpowers:writing-plans"},
         }, "required": ["plan_path"]}),
+    mcp_types.Tool(
+        name="tool.register",
+        description="Register or update an executable tool in the HarnessClaw tool registry",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "id":              {"type": "string", "description": "Unique tool identifier"},
+                "name":            {"type": "string", "description": "Display name"},
+                "description":     {"type": "string", "description": "LLM-readable description"},
+                "input_schema":    {"type": "object", "description": "JSON Schema for call parameters"},
+                "output_schema":   {"type": "object", "description": "JSON Schema for return value"},
+                "adapter":         {"type": "string", "enum": ["cli", "http", "mcp"]},
+                "adapter_config":  {"type": "object", "description": "Backend-specific config"},
+                "cap_allowlist":   {"type": "array",  "items": {"type": "string"}},
+                "allowed_roles":   {"type": "array",  "items": {"type": "string"}},
+                "required_scopes": {"type": "array",  "items": {"type": "string"}},
+                "metadata":        {"type": "object"},
+            },
+            "required": ["id", "name", "description", "input_schema", "output_schema",
+                         "adapter", "adapter_config", "cap_allowlist", "allowed_roles",
+                         "required_scopes"],
+        },
+    ),
 ]
 
 
@@ -484,11 +576,13 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
         "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
+        "tool.register": lambda a: gateway_mcp.tool_register(token=token, **a),
     }
     handler = handlers.get(name)
-    if handler is None:
-        raise ValueError(f"unknown tool {name!r}")
-    return await handler(args)
+    if handler is not None:
+        return await handler(args)
+    # Fallthrough: route unknown tool names to tool_executor
+    return await tool_executor.execute(name, args)
 
 
 def _build_mcp_server(token: str) -> MCPServer:

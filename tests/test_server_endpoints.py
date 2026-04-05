@@ -6,7 +6,11 @@ from harness_claw.gateway.task_store import Task
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    c = TestClient(app)
+    yield c
+    # Clean up tools registered during tests to prevent accumulation across runs
+    for tool_id in ["my_tool", "get_me", "del_me", "test_cli_tool", "mcp_registered_tool"]:
+        c.delete(f"/api/tools/{tool_id}")
 
 
 def make_paused_task() -> Task:
@@ -73,7 +77,7 @@ def test_execute_plan_missing_file_returns_error(client):
 
 def _get_bootstrap_token():
     from harness_claw.server import token_store
-    return token_store.issue("bootstrap", ["agent:delegate"])
+    return token_store.issue("bootstrap", ["agent:delegate", "tool:write"])
 
 
 def test_tool_register_mcp_method(client):
@@ -98,5 +102,107 @@ def test_tool_register_mcp_method(client):
         },
         headers={"Authorization": f"Bearer {_get_bootstrap_token()}"},
     )
-    assert resp.status_code in (400, 404, 200)
-    # Once tool.register is wired into server.py dispatch (Task 5), assert 200 + {"id": "test_cli_tool", "status": "registered"}
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("id") == "test_cli_tool"
+    assert body.get("status") == "registered"
+
+
+def test_get_tools_returns_empty_list(client):
+    resp = client.get("/api/tools")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_post_tool_creates_and_get_returns_it(client):
+    payload = {
+        "id": "my_tool",
+        "name": "My Tool",
+        "description": "Does something",
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"},
+        "adapter": "cli",
+        "adapter_config": {"command": "echo hello"},
+        "cap_allowlist": ["python"],
+        "allowed_roles": [],
+        "required_scopes": [],
+        "metadata": {},
+    }
+    resp = client.post("/api/tools", json=payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] == "my_tool"
+
+    resp2 = client.get("/api/tools")
+    assert resp2.status_code == 200
+    tools = resp2.json()
+    assert any(t["id"] == "my_tool" for t in tools)
+
+
+def test_get_tool_by_id(client):
+    payload = {
+        "id": "get_me",
+        "name": "Get Me",
+        "description": "desc",
+        "input_schema": {}, "output_schema": {},
+        "adapter": "cli", "adapter_config": {"command": "echo"},
+        "cap_allowlist": ["x"], "allowed_roles": [], "required_scopes": [],
+        "metadata": {},
+    }
+    client.post("/api/tools", json=payload)
+    resp = client.get("/api/tools/get_me")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "get_me"
+
+
+def test_get_tool_by_id_not_found(client):
+    resp = client.get("/api/tools/nonexistent")
+    assert resp.status_code == 404
+
+
+def test_delete_tool(client):
+    payload = {
+        "id": "del_me",
+        "name": "Del Me",
+        "description": "desc",
+        "input_schema": {}, "output_schema": {},
+        "adapter": "cli", "adapter_config": {"command": "echo"},
+        "cap_allowlist": ["x"], "allowed_roles": [], "required_scopes": [],
+        "metadata": {},
+    }
+    client.post("/api/tools", json=payload)
+    resp = client.delete("/api/tools/del_me")
+    assert resp.status_code == 200
+    assert client.get("/api/tools/del_me").status_code == 404
+
+
+def test_tool_register_mcp_stores_tool(client):
+    """After registering via MCP tool.register, tool appears in GET /api/tools."""
+    resp = client.post(
+        "/mcp/tools/call",
+        json={
+            "name": "tool.register",
+            "arguments": {
+                "id": "mcp_registered_tool",
+                "name": "MCP Tool",
+                "description": "via MCP",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "adapter": "cli",
+                "adapter_config": {"command": "echo"},
+                "cap_allowlist": ["python"],
+                "allowed_roles": [],
+                "required_scopes": [],
+                "metadata": {},
+            },
+        },
+        headers={"Authorization": f"Bearer {_get_bootstrap_token()}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("id") == "mcp_registered_tool"
+    assert body.get("status") == "registered"
+
+    tools_resp = client.get("/api/tools")
+    ids = [t["id"] for t in tools_resp.json()]
+    assert "mcp_registered_tool" in ids
