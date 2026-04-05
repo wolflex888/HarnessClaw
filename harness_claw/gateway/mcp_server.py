@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ from harness_claw.gateway.capability import CapabilityConnector
 from harness_claw.gateway.event_bus import EventBus
 from harness_claw.gateway.memory import MemoryStore
 from harness_claw.gateway.policy import PolicyEngine
+from harness_claw.gateway.tool_registry import ToolRegistry
+from harness_claw.gateway.tool_store import ToolDef
 from harness_claw.runtime.plan_executor import PlanExecutor
 
 
@@ -35,6 +38,7 @@ class GatewayMCP:
         spawn_callback: Any | None = None,
         workflow_engine: Any | None = None,
         event_bus: EventBus | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._tokens = token_store
         self._policy = policy
@@ -45,6 +49,7 @@ class GatewayMCP:
         self._spawn_callback = spawn_callback  # async (role_id, working_dir) → session_id
         self._workflow_engine = workflow_engine
         self._event_bus = event_bus
+        self._tool_registry = tool_registry
 
     def _auth(self, token: str, operation: str) -> str:
         """Validate token and check scope. Returns subject. Raises on failure."""
@@ -212,6 +217,50 @@ class GatewayMCP:
         ))
         progress_output = "\n".join(progress_log)
         return f"{progress_output}\n\n---\n\n{summary}"
+
+    async def tool_register(
+        self,
+        token: str,
+        id: str,
+        name: str,
+        description: str,
+        input_schema: dict,
+        output_schema: dict,
+        adapter: str,
+        adapter_config: dict,
+        cap_allowlist: list[str],
+        allowed_roles: list[str],
+        required_scopes: list[str],
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
+        subject = self._auth(token, "tool:write")
+
+        if self._tool_registry is None:
+            raise RuntimeError("tool_register requires tool_registry — not configured")
+
+        now = datetime.now(timezone.utc).isoformat()
+        tool = ToolDef(
+            id=id,
+            name=name,
+            description=description,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            adapter=adapter,
+            adapter_config=adapter_config,
+            cap_allowlist=cap_allowlist,
+            allowed_roles=allowed_roles,
+            required_scopes=required_scopes,
+            metadata=metadata or {},
+            created_at=now,
+            updated_at=now,
+        )
+        self._tool_registry.save(tool)
+
+        self._audit.log(AuditEvent(
+            subject=subject, operation="tool.register", resource=id,
+            outcome="allowed", details={"adapter": adapter},
+        ))
+        return {"id": id, "status": "registered"}
 
     # --- Memory tools ---
 

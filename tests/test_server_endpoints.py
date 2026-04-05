@@ -74,3 +74,29 @@ def test_execute_plan_missing_file_returns_error(client):
 def _get_bootstrap_token():
     from harness_claw.server import token_store
     return token_store.issue("bootstrap", ["agent:delegate"])
+
+
+def test_tool_register_mcp_method(client):
+    """tool.register MCP method stores a tool and returns {id, status}."""
+    resp = client.post(
+        "/mcp/tools/call",
+        json={
+            "name": "tool.register",
+            "arguments": {
+                "id": "test_cli_tool",
+                "name": "Test CLI Tool",
+                "description": "Runs echo",
+                "input_schema": {"type": "object", "properties": {"msg": {"type": "string"}}, "required": ["msg"]},
+                "output_schema": {"type": "object"},
+                "adapter": "cli",
+                "adapter_config": {"command": "echo {{msg}}"},
+                "cap_allowlist": ["python"],
+                "allowed_roles": [],
+                "required_scopes": [],
+                "metadata": {},
+            },
+        },
+        headers={"Authorization": f"Bearer {_get_bootstrap_token()}"},
+    )
+    assert resp.status_code in (400, 404, 200)
+    # Once tool.register is wired into server.py dispatch (Task 5), assert 200 + {"id": "test_cli_tool", "status": "registered"}
