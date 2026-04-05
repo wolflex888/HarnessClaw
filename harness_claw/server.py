@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -276,6 +277,24 @@ async def retry_task(task_id: str) -> dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {"task_id": new_task_id}
+
+
+@app.post("/api/tasks/{task_id}/resume")
+async def resume_task(task_id: str) -> dict[str, Any]:
+    task = broker.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.status != "paused":
+        raise HTTPException(status_code=400, detail=f"task status is {task.status!r}, not 'paused'")
+    task.status = "queued"
+    task.pause_reason = None
+    broker._store.save(task)
+    broker.scheduler.push(task)
+    try:
+        asyncio.create_task(broker.scheduler.drain())
+    except RuntimeError:
+        pass
+    return {"task_id": task_id}
 
 
 class WorkflowRunRequest(BaseModel):
