@@ -151,3 +151,25 @@ async def test_poll_does_not_duplicate_tool_events(tmp_path):
 
     status = obs_store.get_status("sess-1")
     assert len(status.recent_activity) == 1
+
+
+async def test_provider_session_id_captured_from_jsonl_filename(tmp_path):
+    """provider_session_id is the stem of the most-recent JSONL file."""
+    project_dir = tmp_path / "projects" / "tmp-test-project"
+    project_dir.mkdir(parents=True)
+    jsonl = project_dir / "my-claude-session-id.jsonl"
+    jsonl.write_text("")
+
+    async def on_cost(sid, cost, inp, out):
+        pass
+
+    poller = CostPoller(
+        session_id="s1",
+        working_dir="/tmp/test-project",
+        on_cost_update=on_cost,
+        claude_home=tmp_path,
+    )
+    assert poller.provider_session_id is None
+
+    await poller._poll()
+    assert poller.provider_session_id == "my-claude-session-id"

@@ -41,6 +41,7 @@ class CostPoller:
         self._seen_tool_ids: set[str] = set()
         self._obs_store = obs_store
         self._task: asyncio.Task[None] | None = None
+        self.provider_session_id: str | None = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._poll_loop())
@@ -67,6 +68,9 @@ class CostPoller:
         )
         if not jsonl_files:
             return
+
+        if self.provider_session_id is None:
+            self.provider_session_id = jsonl_files[0].stem
 
         total_cost = 0.0
         total_input = 0
