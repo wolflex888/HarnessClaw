@@ -32,9 +32,11 @@ def parse_plan(path: str | Path) -> list[PlanTask]:
         title = match.group(1).strip()
         # Reconstruct the header from the original text
         header = text[match.start():match.end()]
+        # Extract the task number from the header (e.g., "## Task 3: Title" -> 3)
+        index = int(re.search(r'\d+', match.group(0)).group())
         # Get the body from the corresponding part (accounting for preamble in parts[0])
         body = parts[i + 1] if i + 1 < len(parts) else ""
         full_text = (header + "\n" + body).strip()
-        tasks.append(PlanTask(index=i + 1, title=title, full_text=full_text))
+        tasks.append(PlanTask(index=index, title=title, full_text=full_text))
 
     return tasks
