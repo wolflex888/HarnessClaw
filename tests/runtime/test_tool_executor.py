@@ -157,3 +157,54 @@ async def test_http_adapter_posts_to_url(tmp_path):
         mock_client.request.assert_called_once_with(
             "POST", "http://fake-server/api", json={"key": "value"}, headers={}
         )
+
+
+@pytest.mark.asyncio
+async def test_cli_on_output_receives_labeled_chunks(tmp_path):
+    """on_output is called with [tool: id]-prefixed chunks during CLI execution."""
+    executor = make_executor(tmp_path, [make_tool()])
+    chunks: list[bytes] = []
+
+    async def collect(data: bytes) -> None:
+        chunks.append(data)
+
+    result = await executor.execute("echo_tool", {"msg": "streaming"}, on_output=collect)
+    assert result["exit_code"] == 0
+    combined = b"".join(chunks)
+    assert b"[tool: echo_tool]" in combined
+    assert b"streaming" in combined
+
+
+@pytest.mark.asyncio
+async def test_cli_on_output_exit_status_emitted(tmp_path):
+    """A final exit-status line is emitted after the process finishes."""
+    executor = make_executor(tmp_path, [make_tool()])
+    chunks: list[bytes] = []
+
+    async def collect(data: bytes) -> None:
+        chunks.append(data)
+
+    await executor.execute("echo_tool", {"msg": "hi"}, on_output=collect)
+    combined = b"".join(chunks)
+    assert b"\xe2\x9c\x93 exit 0" in combined or b"exit 0" in combined
+
+
+@pytest.mark.asyncio
+async def test_cli_no_on_output_still_works(tmp_path):
+    """Passing no on_output (default None) produces the same result as before."""
+    executor = make_executor(tmp_path, [make_tool()])
+    result = await executor.execute("echo_tool", {"msg": "no-callback"})
+    assert result["exit_code"] == 0
+    assert "no-callback" in result["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_cli_on_output_exception_does_not_break_execution(tmp_path):
+    """If on_output raises, tool execution completes normally."""
+    executor = make_executor(tmp_path, [make_tool()])
+
+    async def bad_callback(data: bytes) -> None:
+        raise RuntimeError("callback exploded")
+
+    result = await executor.execute("echo_tool", {"msg": "safe"}, on_output=bad_callback)
+    assert result["exit_code"] == 0
