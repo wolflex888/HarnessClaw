@@ -4,7 +4,7 @@ import asyncio
 import json as _json
 import re
 import time
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
 
 import httpx
 from jsonschema import validate
@@ -126,7 +126,14 @@ class ToolExecutor:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.request(method, url, json=args, headers=headers)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except Exception:
+                await _safe_emit(
+                    on_output,
+                    f"{prefix}✕ {response.status_code} ({elapsed_ms}ms)\r\n".encode(),
+                )
+                raise
             result = response.json()
 
         body = _json.dumps(result, indent=2)
