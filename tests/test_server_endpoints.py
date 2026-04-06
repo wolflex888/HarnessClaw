@@ -9,7 +9,7 @@ def client():
     c = TestClient(app)
     yield c
     # Clean up tools registered during tests to prevent accumulation across runs
-    for tool_id in ["my_tool", "get_me", "del_me", "test_cli_tool", "mcp_registered_tool"]:
+    for tool_id in ["my_tool", "get_me", "del_me", "test_cli_tool", "mcp_registered_tool", "stream_test_tool"]:
         c.delete(f"/api/tools/{tool_id}")
 
 
@@ -206,3 +206,49 @@ def test_tool_register_mcp_stores_tool(client):
     tools_resp = client.get("/api/tools")
     ids = [t["id"] for t in tools_resp.json()]
     assert "mcp_registered_tool" in ids
+
+
+def test_fallthrough_tool_broadcasts_output(client):
+    """When a registered CLI tool is called via /mcp/tools/call, runner._broadcast
+    is called with type='output' messages containing labeled tool output."""
+    import base64 as _b64
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, patch
+    from harness_claw.server import runner, token_store, tool_registry
+    from harness_claw.gateway.tool_store import ToolDef
+
+    now = datetime.now(timezone.utc).isoformat()
+    tool = ToolDef(
+        id="stream_test_tool",
+        name="stream_test_tool",
+        description="test",
+        input_schema={"type": "object", "properties": {"msg": {"type": "string"}}, "required": ["msg"]},
+        output_schema={"type": "object"},
+        adapter="cli",
+        adapter_config={"command": "echo {{msg}}", "timeout": 5},
+        cap_allowlist=[], allowed_roles=[], required_scopes=[],
+        metadata={}, created_at=now, updated_at=now,
+    )
+    tool_registry.save(tool)
+
+    token = token_store.issue("sess-stream-test", ["tool:use"])
+    mock_broadcast = AsyncMock()
+
+    with patch.object(runner, "_broadcast", mock_broadcast):
+        resp = client.post(
+            "/mcp/tools/call",
+            json={"name": "stream_test_tool", "arguments": {"msg": "hello-stream"}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    output_calls = [
+        call.args[0] for call in mock_broadcast.call_args_list
+        if call.args[0].get("type") == "output"
+    ]
+    assert len(output_calls) > 0
+    combined = b"".join(_b64.b64decode(m["data"]) for m in output_calls)
+    assert b"[tool: stream_test_tool]" in combined
+    assert b"hello-stream" in combined
+
+    tool_registry.delete("stream_test_tool")

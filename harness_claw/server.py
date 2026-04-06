@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -203,7 +204,13 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
             decision = policy.check(subject=subject, scopes=scopes, operation="tool:use")
             if not decision.allowed:
                 return JSONResponse({"error": f"Forbidden: {decision.reason}"}, status_code=403)
-            result = await tool_executor.execute(tool, args)
+            async def _on_output(data: bytes) -> None:
+                await runner._broadcast({
+                    "type": "output",
+                    "session_id": subject,
+                    "data": base64.b64encode(data).decode(),
+                })
+            result = await tool_executor.execute(tool, args, on_output=_on_output)
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -601,7 +608,13 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
     decision = policy.check(subject=subject, scopes=scopes, operation="tool:use")
     if not decision.allowed:
         raise PermissionError(f"Forbidden: {decision.reason}")
-    return await tool_executor.execute(name, args)
+    async def _on_output(data: bytes) -> None:
+        await runner._broadcast({
+            "type": "output",
+            "session_id": subject,
+            "data": base64.b64encode(data).decode(),
+        })
+    return await tool_executor.execute(name, args, on_output=_on_output)
 
 
 def _build_mcp_server(token: str) -> MCPServer:
