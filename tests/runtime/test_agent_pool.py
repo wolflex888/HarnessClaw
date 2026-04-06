@@ -57,9 +57,9 @@ async def test_acquire_spawns_agent_and_returns_session_id():
 
     session_id = await pool.acquire(["python", "typescript"])
 
-    assert isinstance(session_id, str) and len(session_id) > 0
     runner.start_session.assert_called_once()
     spawned: Session = runner.start_session.call_args[0][0]
+    assert session_id == spawned.session_id
     assert spawned.role_id == "code-writer"
     assert spawned.working_dir == "/tmp"
     assert spawned.model == "claude-sonnet-4-6"
@@ -156,3 +156,19 @@ async def test_release_all_continues_on_kill_error():
 
     await pool.release_all()  # must not raise
     assert pool._owned == {}
+
+
+@pytest.mark.asyncio
+async def test_acquire_subset_caps_reuses_existing_session():
+    """acquire(["python"]) reuses code-writer session already spawned for ["python", "typescript"]."""
+    roles = [make_role("code-writer", ["python", "typescript"])]
+    connector = LocalConnector()
+    runner = make_runner(connector, roles)
+    registry = make_registry(roles)
+    pool = AgentPool(runner=runner, connector=connector, registry=registry, working_dir="/tmp")
+
+    sid1 = await pool.acquire(["python", "typescript"])
+    sid2 = await pool.acquire(["python"])
+
+    assert sid1 == sid2
+    assert runner.start_session.call_count == 1

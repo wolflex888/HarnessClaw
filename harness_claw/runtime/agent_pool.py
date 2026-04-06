@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
 from harness_claw.gateway.capability import LocalConnector
@@ -25,7 +24,7 @@ class AgentPool:
         connector: LocalConnector,
         registry: RoleRegistry,
         working_dir: str,
-        acquire_timeout: int = 30,
+        acquire_timeout: float = 30,
     ) -> None:
         self._runner = runner
         self._connector = connector
@@ -71,7 +70,7 @@ class AgentPool:
         await self._runner.start_session(session)
 
         # Poll connector until the agent self-registers (or timeout)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + self._acquire_timeout
         while True:
             agents = await self._connector.query(caps)
@@ -92,6 +91,7 @@ class AgentPool:
         for role_id, session_id in list(self._owned.items()):
             try:
                 self._runner.kill_session(session_id)
+                await self._connector.deregister(session_id)
             except Exception as exc:
                 _logger.warning(
                     "AgentPool: failed to kill session %s (role=%s): %s",
