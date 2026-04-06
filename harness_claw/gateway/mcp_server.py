@@ -40,7 +40,7 @@ class GatewayMCP:
         event_bus: EventBus | None = None,
         tool_registry: ToolRegistry | None = None,
         runner: Any | None = None,
-        connector: Any | None = None,
+        pool_connector: Any | None = None,
         registry: Any | None = None,
     ) -> None:
         self._tokens = token_store
@@ -54,7 +54,7 @@ class GatewayMCP:
         self._event_bus = event_bus
         self._tool_registry = tool_registry
         self._runner = runner
-        self._connector = connector
+        self._pool_connector = pool_connector
         self._registry = registry
 
     def _auth(self, token: str, operation: str) -> str:
@@ -212,13 +212,13 @@ class GatewayMCP:
         pool = None
         if (
             self._runner is not None
-            and self._connector is not None
+            and self._pool_connector is not None
             and self._registry is not None
         ):
             from harness_claw.runtime.agent_pool import AgentPool
             pool = AgentPool(
                 runner=self._runner,
-                connector=self._connector,
+                connector=self._pool_connector,
                 registry=self._registry,
                 working_dir=str(Path(plan_path).parent),
             )
@@ -232,14 +232,20 @@ class GatewayMCP:
 
         try:
             summary = await executor.execute(plan_path)
+            self._audit.log(AuditEvent(
+                subject=subject, operation="execute_plan", resource=plan_path,
+                outcome="allowed", details={"plan_path": plan_path},
+            ))
+        except Exception as exc:
+            self._audit.log(AuditEvent(
+                subject=subject, operation="execute_plan", resource=plan_path,
+                outcome="error", details={"reason": str(exc)},
+            ))
+            raise
         finally:
             if pool is not None:
                 await pool.release_all()
 
-        self._audit.log(AuditEvent(
-            subject=subject, operation="execute_plan", resource=plan_path,
-            outcome="allowed", details={"plan_path": plan_path},
-        ))
         progress_output = "\n".join(progress_log)
         return f"{progress_output}\n\n---\n\n{summary}"
 
