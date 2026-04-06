@@ -208,3 +208,74 @@ async def test_cli_on_output_exception_does_not_break_execution(tmp_path):
 
     result = await executor.execute("echo_tool", {"msg": "safe"}, on_output=bad_callback)
     assert result["exit_code"] == 0
+
+
+@pytest.mark.asyncio
+async def test_http_on_output_emits_start_and_done(tmp_path):
+    """HTTP adapter emits start banner then status+body via on_output."""
+    tool = make_tool(
+        adapter="http",
+        adapter_config={"url": "http://fake/api", "method": "POST"},
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+    )
+    executor = make_executor(tmp_path, [tool])
+    chunks: list[bytes] = []
+
+    async def collect(data: bytes) -> None:
+        chunks.append(data)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+    mock_response.raise_for_status = MagicMock()
+    mock_response.status_code = 200
+
+    with patch("harness_claw.runtime.tool_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await executor.execute("echo_tool", {}, on_output=collect)
+
+    combined = b"".join(chunks)
+    assert b"[tool: echo_tool]" in combined
+    assert "▶ POST http://fake/api".encode() in combined
+    assert b"200" in combined
+    assert b'"ok": true' in combined or b'"ok":true' in combined
+
+
+@pytest.mark.asyncio
+async def test_mcp_on_output_emits_start_and_done(tmp_path):
+    """MCP adapter emits start banner then done+body via on_output."""
+    tool = make_tool(
+        adapter="mcp",
+        adapter_config={"server_url": "http://mcp-server", "tool_name": "do_thing"},
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+    )
+    executor = make_executor(tmp_path, [tool])
+    chunks: list[bytes] = []
+
+    async def collect(data: bytes) -> None:
+        chunks.append(data)
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"done": 1}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("harness_claw.runtime.tool_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value = mock_client
+
+        await executor.execute("echo_tool", {}, on_output=collect)
+
+    combined = b"".join(chunks)
+    assert b"[tool: echo_tool]" in combined
+    assert "▶ → http://mcp-server do_thing".encode() in combined
+    assert "✓ done".encode() in combined
+    assert b'"done": 1' in combined or b'"done":1' in combined
