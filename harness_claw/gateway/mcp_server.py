@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -216,11 +217,18 @@ class GatewayMCP:
             and self._registry is not None
         ):
             from harness_claw.runtime.agent_pool import AgentPool
+            _git = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(Path(plan_path).parent),
+                capture_output=True,
+                text=True,
+            )
+            working_dir = _git.stdout.strip() if _git.returncode == 0 else str(Path(plan_path).parent)
             pool = AgentPool(
                 runner=self._runner,
                 connector=self._pool_connector,
                 registry=self._registry,
-                working_dir=str(Path(plan_path).parent),
+                working_dir=working_dir,
             )
 
         executor = PlanExecutor(

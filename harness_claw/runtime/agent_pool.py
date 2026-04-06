@@ -90,6 +90,7 @@ class AgentPool:
         """Kill all sessions owned by this pool. Logs and continues on error."""
         for role_id, session_id in list(self._owned.items()):
             try:
+                # kill_session is synchronous — do not await
                 self._runner.kill_session(session_id)
                 await self._connector.deregister(session_id)
             except Exception as exc:
