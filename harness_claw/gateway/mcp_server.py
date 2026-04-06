@@ -39,6 +39,9 @@ class GatewayMCP:
         workflow_engine: Any | None = None,
         event_bus: EventBus | None = None,
         tool_registry: ToolRegistry | None = None,
+        runner: Any | None = None,
+        connector: Any | None = None,
+        registry: Any | None = None,
     ) -> None:
         self._tokens = token_store
         self._policy = policy
@@ -50,6 +53,9 @@ class GatewayMCP:
         self._workflow_engine = workflow_engine
         self._event_bus = event_bus
         self._tool_registry = tool_registry
+        self._runner = runner
+        self._connector = connector
+        self._registry = registry
 
     def _auth(self, token: str, operation: str) -> str:
         """Validate token and check scope. Returns subject. Raises on failure."""
@@ -203,13 +209,32 @@ class GatewayMCP:
         async def on_progress(msg: str) -> None:
             progress_log.append(msg)
 
+        pool = None
+        if (
+            self._runner is not None
+            and self._connector is not None
+            and self._registry is not None
+        ):
+            from harness_claw.runtime.agent_pool import AgentPool
+            pool = AgentPool(
+                runner=self._runner,
+                connector=self._connector,
+                registry=self._registry,
+                working_dir=str(Path(plan_path).parent),
+            )
+
         executor = PlanExecutor(
             broker=self._broker,
             event_bus=self._event_bus,
             on_progress=on_progress,
+            pool=pool,
         )
 
-        summary = await executor.execute(plan_path)
+        try:
+            summary = await executor.execute(plan_path)
+        finally:
+            if pool is not None:
+                await pool.release_all()
 
         self._audit.log(AuditEvent(
             subject=subject, operation="execute_plan", resource=plan_path,
