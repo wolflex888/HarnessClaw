@@ -186,7 +186,7 @@ async def test_cli_on_output_exit_status_emitted(tmp_path):
 
     await executor.execute("echo_tool", {"msg": "hi"}, on_output=collect)
     combined = b"".join(chunks)
-    assert b"\xe2\x9c\x93 exit 0" in combined or b"exit 0" in combined
+    assert b"[tool: echo_tool] \xe2\x9c\x93 exit 0" in combined
 
 
 @pytest.mark.asyncio
