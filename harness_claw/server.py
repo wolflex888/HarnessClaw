@@ -76,18 +76,6 @@ workflow_engine = WorkflowEngine(
     db_path=_workflows_db,
 )
 
-gateway_mcp = GatewayMCP(
-    token_store=token_store,
-    policy=policy,
-    connectors=[connector, gateway_connector],
-    broker=broker,
-    memory=memory,
-    audit=audit,
-    workflow_engine=workflow_engine,
-    event_bus=event_bus,
-    tool_registry=tool_registry,
-)
-
 runner = JobRunner(
     registry=registry,
     store=store,
@@ -99,6 +87,21 @@ runner = JobRunner(
     obs_store=obs_store,
     obs_provider=obs_provider,
     tool_registry=tool_registry,
+)
+
+gateway_mcp = GatewayMCP(
+    token_store=token_store,
+    policy=policy,
+    connectors=[connector, gateway_connector],
+    broker=broker,
+    memory=memory,
+    audit=audit,
+    workflow_engine=workflow_engine,
+    event_bus=event_bus,
+    tool_registry=tool_registry,
+    runner=runner,
+    pool_connector=connector,
+    registry=registry,
 )
 
 
