@@ -190,3 +190,36 @@ async def test_run_task_stuck_after_max_rounds():
 
     assert result.startswith("STUCK: Hard Task")
     assert any("STUCK" in m for m in executor._progress_log)
+
+
+@pytest.mark.asyncio
+async def test_run_task_calls_pool_acquire_before_delegate():
+    """pool.acquire() must be called with the right caps before each broker.delegate()."""
+    event_bus = LocalEventBus()
+    broker = MagicMock()
+    tasks_store: dict[str, Task] = {}
+    broker.get_task.side_effect = lambda tid: tasks_store.get(tid)
+
+    def result_factory(call_num, caps):
+        if "python" in caps or "typescript" in caps:
+            return {"summary": "done", "files_changed": []}
+        return {"verdict": "APPROVE", "summary": "ok", "findings": []}
+
+    broker.delegate = AsyncMock(side_effect=build_fake_delegate(event_bus, tasks_store, result_factory))
+
+    acquired_caps: list[list[str]] = []
+    pool = MagicMock()
+    pool.acquire = AsyncMock(side_effect=lambda caps: acquired_caps.append(caps))
+
+    progress = []
+    async def on_progress(msg: str) -> None:
+        progress.append(msg)
+
+    executor = PlanExecutor(broker=broker, event_bus=event_bus, on_progress=on_progress, pool=pool)
+    plan_task = PlanTask(index=1, title="My Task", full_text="## Task 1: My Task\n\nDo it.")
+    result = await executor._run_task(plan_task, total=1)
+
+    assert result == "DONE: My Task"
+    assert ["python", "typescript"] in acquired_caps
+    assert ["spec-review"] in acquired_caps
+    assert ["code-review"] in acquired_caps

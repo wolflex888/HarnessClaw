@@ -25,10 +25,12 @@ class PlanExecutor:
         broker: Any,
         event_bus: EventBus,
         on_progress: Callable[[str], Awaitable[None]],
+        pool: Any | None = None,
     ) -> None:
         self._broker = broker
         self._event_bus = event_bus
         self._on_progress = on_progress
+        self._pool = pool
 
     async def execute(self, plan_path: str) -> str:
         tasks = parse_plan(plan_path)
@@ -45,6 +47,8 @@ class PlanExecutor:
         prefix = f"[Task {task.index}/{total}]"
 
         await self._on_progress(f"{prefix} Implementing: {task.title}...")
+        if self._pool is not None:
+            await self._pool.acquire(["python", "typescript"])
         writer_tid = await self._broker.delegate(
             delegated_by="plan-executor",
             caps=["python", "typescript"],
@@ -70,6 +74,11 @@ class PlanExecutor:
             spec_instr = self._spec_review_prompt(task, writer_summary, prev_spec_findings, round_num)
             quality_instr = self._quality_review_prompt(task, writer_summary, prev_quality_findings, round_num)
 
+            if self._pool is not None:
+                await asyncio.gather(
+                    self._pool.acquire(["spec-review"]),
+                    self._pool.acquire(["code-review"]),
+                )
             spec_tid, quality_tid = await asyncio.gather(
                 self._broker.delegate(
                     delegated_by="plan-executor",
@@ -120,6 +129,8 @@ class PlanExecutor:
                 f"{prefix} REVISE — sending findings to code-writer (round {round_num + 1})"
             )
             rewrite_instr = self._rewrite_prompt(task, "\n\n".join(findings_parts))
+            if self._pool is not None:
+                await self._pool.acquire(["python", "typescript"])
             rewrite_tid = await self._broker.delegate(
                 delegated_by="plan-executor",
                 caps=["python", "typescript"],
