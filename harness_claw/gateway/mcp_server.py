@@ -15,6 +15,7 @@ from harness_claw.gateway.memory import MemoryStore
 from harness_claw.gateway.policy import PolicyEngine
 from harness_claw.gateway.tool_registry import ToolRegistry
 from harness_claw.gateway.tool_store import ToolDef
+from harness_claw.runtime.code_exec import DispatchFn, run_rpc_script
 
 
 class PermissionError(Exception):
@@ -275,6 +276,45 @@ class GatewayMCP:
         else:
             error = task.result if task else "unknown error"
             return f"Plan failed: {error}"
+
+    async def execute_code(
+        self,
+        *,
+        token: str,
+        script: str,
+        dispatch: DispatchFn,
+        timeout_seconds: float = 120.0,
+        max_tool_calls: int = 100,
+    ) -> dict[str, Any]:
+        """Run a Python script in a subprocess with RPC access to HarnessClaw tools.
+
+        Only stdout/stderr/exit_code return to the caller. Intermediate tool
+        calls stay out of the LLM context window.
+        """
+        subject = self._auth(token, "code:exec")
+        result = await run_rpc_script(
+            script,
+            token=token,
+            dispatch=dispatch,
+            max_tool_calls=max_tool_calls,
+            timeout_seconds=timeout_seconds,
+        )
+        self._audit.log(AuditEvent(
+            subject=subject, operation="code:exec", resource="sandbox",
+            outcome="allowed", details={
+                "script_bytes": len(script.encode()),
+                "tool_calls": result.tool_calls,
+                "exit_code": result.exit_code,
+                "timed_out": result.timed_out,
+            },
+        ))
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+            "tool_calls": result.tool_calls,
+            "timed_out": result.timed_out,
+        }
 
     async def tool_register(
         self,
