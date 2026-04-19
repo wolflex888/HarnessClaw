@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import yaml
 
 from harness_claw.gateway.audit import AuditEvent, AuditLogger
+from harness_claw.gateway.memory import MemoryEntry, MemoryStore
 
 log = logging.getLogger(__name__)
 
@@ -204,3 +205,55 @@ class RedactingAuditLogger:
             return
 
         self._inner.log(replace(event, details=scrubbed_details))
+
+
+class RedactingMemoryStore:
+    """Drop-in replacement for `MemoryStore` that scrubs `value` and `summary`
+    before write. `namespace`, `key`, and `tags` are preserved verbatim —
+    redacting them would break lookups and tag semantics.
+    Read methods delegate unchanged.
+    """
+
+    def __init__(self, inner: MemoryStore, redactor: Redactor) -> None:
+        self._inner = inner
+        self._redactor = redactor
+
+    async def set(
+        self,
+        namespace: str,
+        key: str,
+        value: str,
+        summary: str | None,
+        tags: list[str],
+    ) -> None:
+        scrubbed_value = self._redactor.redact(value)
+        scrubbed_summary = self._redactor.redact(summary) if summary else summary
+        await self._inner.set(
+            namespace, key, scrubbed_value,
+            summary=scrubbed_summary, tags=tags,
+        )
+
+    async def get(self, namespace: str, key: str) -> MemoryEntry | None:
+        return await self._inner.get(namespace, key)
+
+    async def list(self, namespace: str) -> list[MemoryEntry]:
+        return await self._inner.list(namespace)
+
+    async def search(
+        self,
+        namespace: str,
+        query: str,
+        top_k: int = 10,
+        fts_weight: float = 0.4,
+        vec_weight: float = 0.6,
+    ) -> list[MemoryEntry]:
+        return await self._inner.search(
+            namespace, query,
+            top_k=top_k, fts_weight=fts_weight, vec_weight=vec_weight,
+        )
+
+    async def delete(self, namespace: str, key: str) -> None:
+        await self._inner.delete(namespace, key)
+
+    async def namespaces(self) -> list[str]:
+        return await self._inner.namespaces()
