@@ -228,6 +228,7 @@ async def mcp_tool_call(request: Request) -> JSONResponse:
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
         "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
+        "code.exec": lambda a: gateway_mcp.execute_code(token=token, dispatch=_dispatch_tool, **a),
         "tool.register": lambda a: gateway_mcp.tool_register(token=token, **a),
     }
 
@@ -612,6 +613,7 @@ def get_mcp_tools() -> list[dict[str, str]]:
         {"name": "memory.tag", "description": "Add tags to a memory entry"},
         {"name": "workflow.run", "description": "Start a named workflow by ID with an input string; returns run_id"},
         {"name": "execute_plan", "description": "Execute a plan file end-to-end using code-writer, spec-reviewer, and code-reviewer agents"},
+        {"name": "code.exec", "description": "Run Python in a sandbox with RPC access to HarnessClaw tools; only stdout returns to the LLM"},
         {"name": "tool.register", "description": "Register or update an executable tool in the tool registry"},
     ]
 
@@ -682,6 +684,19 @@ _MCP_TOOLS = [
             "plan_path": {"type": "string", "description": "Path to a plan markdown file produced by superpowers:writing-plans"},
         }, "required": ["plan_path"]}),
     mcp_types.Tool(
+        name="code.exec",
+        description="Run a Python script in a sandbox with RPC access to HarnessClaw tools. Only stdout/stderr/exit_code return — intermediate tool calls stay out of context.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "script": {"type": "string", "description": "Python source. Use `import harnessclaw_tools as h; h._call(name, args)` to invoke tools."},
+                "timeout_seconds": {"type": "number", "description": "Default 120."},
+                "max_tool_calls": {"type": "integer", "description": "Default 100."},
+            },
+            "required": ["script"],
+        },
+    ),
+    mcp_types.Tool(
         name="tool.register",
         description="Register or update an executable tool in the HarnessClaw tool registry",
         inputSchema={
@@ -724,6 +739,7 @@ async def _dispatch_tool(token: str, name: str, args: dict[str, Any]) -> Any:
         "memory.tag": lambda a: gateway_mcp.memory_tag(token=token, **a),
         "workflow.run": lambda a: gateway_mcp.workflow_run(token=token, **a),
         "execute_plan": lambda a: gateway_mcp.execute_plan(token=token, **a),
+        "code.exec": lambda a: gateway_mcp.execute_code(token=token, dispatch=_dispatch_tool, **a),
         "tool.register": lambda a: gateway_mcp.tool_register(token=token, **a),
     }
     handler = handlers.get(name)
