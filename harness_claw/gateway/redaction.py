@@ -172,3 +172,44 @@ class RegexRedactor:
             else:
                 s = rule.regex.sub(rule.replacement, s)
         return s
+
+
+from harness_claw.gateway.audit import AuditEvent, AuditLogger
+
+
+class RedactingAuditLogger:
+    """Drop-in replacement for `AuditLogger` that scrubs `details` before write.
+
+    Structural fields (`subject`, `operation`, `resource`, `outcome`) are
+    preserved verbatim so the audit trail stays queryable.
+    """
+
+    def __init__(self, inner: AuditLogger, redactor: Redactor) -> None:
+        self._inner = inner
+        self._redactor = redactor
+
+    def log(self, event: AuditEvent) -> None:
+        try:
+            scrubbed_details = self._redactor.redact(event.details)
+        except Exception as e:
+            # Fail open: write the original event, then emit an ERROR entry
+            # that bypasses the redactor (prevents infinite recursion if the
+            # redactor itself is the bug).
+            self._inner.log(event)
+            self._inner.log(AuditEvent(
+                subject=event.subject,
+                operation=event.operation,
+                resource=event.resource,
+                outcome="error",
+                details={"reason": "redaction_failed", "error": str(e)},
+            ))
+            log.warning("redaction failed for event %s: %s", event.event_id, e)
+            return
+
+        self._inner.log(AuditEvent(
+            subject=event.subject,
+            operation=event.operation,
+            resource=event.resource,
+            outcome=event.outcome,
+            details=scrubbed_details,
+        ))
