@@ -57,6 +57,57 @@ def test_call_preserves_explicit_empty_args_dict():
     assert captured["req"] == {"tool": "t", "args": {}}
 
 
+# ---------------------------------------------------------------------------
+# Task 2 — run_rpc_script tests
+# ---------------------------------------------------------------------------
+import pytest
+
+from harness_claw.runtime.code_exec import CodeExecResult, run_rpc_script
+
+
+async def test_run_rpc_script_returns_stdout():
+    async def dispatch(token: str, name: str, args: dict):
+        return {"echoed": name, "args": args}
+
+    script = (
+        "import harnessclaw_tools as h\n"
+        "r = h._call('memory.list', {'namespace': 'foo'})\n"
+        "print(r['echoed'])\n"
+    )
+    result = await run_rpc_script(script, token="t", dispatch=dispatch)
+    assert isinstance(result, CodeExecResult)
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "memory.list"
+    assert result.tool_calls == 1
+
+
+async def test_run_rpc_script_forwards_errors_from_dispatch():
+    async def dispatch(token: str, name: str, args: dict):
+        raise ValueError("nope")
+
+    script = (
+        "import harnessclaw_tools as h\n"
+        "try:\n"
+        "    h._call('x')\n"
+        "except RuntimeError as e:\n"
+        "    print('caught:', e)\n"
+    )
+    result = await run_rpc_script(script, token="t", dispatch=dispatch)
+    assert result.exit_code == 0
+    assert "caught: nope" in result.stdout
+
+
+async def test_run_rpc_script_captures_stderr_and_nonzero_exit():
+    async def dispatch(token: str, name: str, args: dict):
+        return None
+
+    script = "import sys; sys.stderr.write('oh no'); sys.exit(3)\n"
+    result = await run_rpc_script(script, token="t", dispatch=dispatch)
+    assert result.exit_code == 3
+    assert "oh no" in result.stderr
+    assert result.tool_calls == 0
+
+
 def test_stub_module_parses_as_python():
     src = Path(rpc_stub.__file__).read_text()
     ast.parse(src)
