@@ -23,6 +23,12 @@ from harness_claw.gateway.broker import Broker, LocalDispatcher
 from harness_claw.gateway.event_bus import LocalEventBus
 from harness_claw.gateway.capability import LocalConnector, GatewayConnector
 from harness_claw.gateway.memory import SqliteMemoryStore
+from harness_claw.gateway.redaction import (
+    RedactionConfig,
+    RegexRedactor,
+    RedactingAuditLogger,
+    RedactingMemoryStore,
+)
 from harness_claw.gateway.task_store import SqliteTaskStore
 from harness_claw.gateway.mcp_server import GatewayMCP
 from harness_claw.gateway.policy import LocalPolicyEngine
@@ -73,11 +79,21 @@ dispatcher = LocalDispatcher()
 event_bus = LocalEventBus()
 task_store = SqliteTaskStore(_tasks_db)
 broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
-memory = SqliteMemoryStore(_memory_db)
+_redaction_config = RedactionConfig.load()
+_redactor = RegexRedactor(_redaction_config)
+
+_audit_inner = AuditLogger(_audit_jsonl)
+_memory_inner = SqliteMemoryStore(_memory_db)
+
+if _redaction_config.enabled:
+    audit = RedactingAuditLogger(_audit_inner, _redactor)
+    memory = RedactingMemoryStore(_memory_inner, _redactor)
+else:
+    audit = _audit_inner
+    memory = _memory_inner
 tool_store = SqliteToolStore(_tools_db)
 tool_registry = ToolRegistry(tool_store)
 tool_executor = ToolExecutor(tool_registry)
-audit = AuditLogger(_audit_jsonl)
 obs_store = AgentObservabilityStore()
 obs_provider = ClaudeCodeProvider(base_url="http://localhost:8000")
 workflow_engine = WorkflowEngine(

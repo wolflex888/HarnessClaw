@@ -1,0 +1,26 @@
+# HarnessClaw redaction configuration.
+# Missing file => defaults (secrets on, PII off). Set enabled: false to disable
+# redaction entirely without editing wiring.
+
+enabled: true
+
+categories:
+  anthropic_key: on
+  openai_key: on
+  github_token: on
+  aws_access_key: on
+  aws_secret_key: on
+  gcp_key: on
+  slack_webhook: on
+  jwt: on
+  ssh_private_key: on
+  email: off
+  phone_us: off
+  credit_card: off
+  ssn_us: off
+  user_path: off
+
+# custom_rules:
+#   - name: internal_api_token
+#     pattern: 'ACME-[A-Z0-9]{32}'
+#     replacement: '[REDACTED:internal_api_token]'
