@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness_claw.gateway.redaction import RedactionConfig, CustomRule
+from harness_claw.gateway.redaction import RedactionConfig
 
 
 def test_missing_file_returns_defaults():
@@ -29,7 +29,7 @@ def test_unknown_category_logs_warning_but_loads(tmp_path: Path, caplog):
     path.write_text("categories:\n  quantum_key: on\n")
     cfg = RedactionConfig.load(path)
     assert "quantum_key" not in cfg.categories
-    assert any("quantum_key" in rec.message for rec in caplog.records)
+    assert any("quantum_key" in rec.getMessage() for rec in caplog.records)
 
 
 def test_malformed_custom_rule_regex_raises_at_load(tmp_path: Path):
@@ -62,3 +62,13 @@ def test_enabled_false_is_structurally_valid(tmp_path: Path):
     assert cfg.enabled is False
     # categories still populated with defaults for inspection
     assert "anthropic_key" in cfg.categories
+
+
+def test_custom_rules_missing_name_raises_value_error(tmp_path: Path):
+    path = tmp_path / "redaction.yaml"
+    path.write_text(
+        "custom_rules:\n"
+        "  - pattern: 'ACME-[A-Z0-9]{5}'\n"
+    )
+    with pytest.raises(ValueError, match=r"custom_rules\[0\].*name"):
+        RedactionConfig.load(path)

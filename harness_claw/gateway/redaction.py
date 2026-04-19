@@ -4,7 +4,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -34,12 +33,12 @@ def _default_categories() -> dict[str, bool]:
 class CustomRule:
     name: str
     pattern: str
-    replacement: str | None = None
+    replacement: str = ""
 
     def __post_init__(self) -> None:
         # Compile eagerly to fail fast on bad regex.
         self._compiled = re.compile(self.pattern)
-        if self.replacement is None:
+        if not self.replacement:
             self.replacement = f"[REDACTED:{self.name}]"
 
     @property
@@ -64,16 +63,22 @@ class RedactionConfig:
         cats: dict[str, bool] = dict(known)
         for name, on in (data.get("categories") or {}).items():
             if name not in known:
-                log.warning("redaction: unknown category %r in %s — ignoring", name, path)
+                log.warning("redaction: unknown category %r in %s - ignoring", name, path)
                 continue
             cats[name] = bool(on)
 
         rules: list[CustomRule] = []
-        for entry in data.get("custom_rules") or []:
+        for i, entry in enumerate(data.get("custom_rules") or []):
+            if not isinstance(entry, dict):
+                raise ValueError(f"redaction: custom_rules[{i}] must be a mapping, got {type(entry).__name__}")
+            if "name" not in entry:
+                raise ValueError(f"redaction: custom_rules[{i}] missing required key 'name'")
+            if "pattern" not in entry:
+                raise ValueError(f"redaction: custom_rules[{i}] missing required key 'pattern'")
             rules.append(CustomRule(
                 name=entry["name"],
                 pattern=entry["pattern"],
-                replacement=entry.get("replacement"),
+                replacement=entry.get("replacement", ""),
             ))
 
         return cls(
