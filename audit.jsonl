@@ -1,2 +1,0 @@
-{"subject": "bootstrap", "operation": "tool.register", "resource": "test_cli_tool", "outcome": "allowed", "details": {"adapter": "cli"}, "event_id": "69368bc7-d6d9-4576-8292-ac2f1bede3bf", "timestamp": "2026-04-19T21:57:55.794790+00:00"}
-{"subject": "bootstrap", "operation": "tool.register", "resource": "mcp_registered_tool", "outcome": "allowed", "details": {"adapter": "cli"}, "event_id": "021a7b17-e12d-4d6a-8b0a-d6e8b68f4594", "timestamp": "2026-04-19T21:57:55.841864+00:00"}
