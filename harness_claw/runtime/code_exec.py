@@ -44,11 +44,12 @@ async def run_rpc_script(
         shutil.copy(_STUB_SRC, tmp / "harnessclaw_tools.py")
         (tmp / "script.py").write_text(script)
 
-        state = {"count": 0}
+        tool_call_count = 0
 
         async def handle_client(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         ) -> None:
+            nonlocal tool_call_count
             try:
                 while True:
                     line = await reader.readline()
@@ -57,7 +58,9 @@ async def run_rpc_script(
                     try:
                         msg = json.loads(line.decode())
                         name = msg["tool"]
-                        args = msg.get("args", {}) or {}
+                        args = msg.get("args")
+                        if args is None:
+                            args = {}
                     except Exception as e:
                         writer.write(
                             (json.dumps({"error": f"bad request: {e}"}) + "\n").encode()
@@ -65,7 +68,7 @@ async def run_rpc_script(
                         await writer.drain()
                         continue
 
-                    state["count"] += 1
+                    tool_call_count += 1
                     try:
                         result = await dispatch(token, name, args)
                         writer.write((json.dumps({"result": result}) + "\n").encode())
@@ -110,6 +113,6 @@ async def run_rpc_script(
             stdout=stdout_b.decode(errors="replace"),
             stderr=stderr_b.decode(errors="replace"),
             exit_code=exit_code,
-            tool_calls=state["count"],
+            tool_calls=tool_call_count,
             timed_out=timed_out,
         )

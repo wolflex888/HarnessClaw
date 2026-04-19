@@ -60,8 +60,6 @@ def test_call_preserves_explicit_empty_args_dict():
 # ---------------------------------------------------------------------------
 # Task 2 — run_rpc_script tests
 # ---------------------------------------------------------------------------
-import pytest
-
 from harness_claw.runtime.code_exec import CodeExecResult, run_rpc_script
 
 
