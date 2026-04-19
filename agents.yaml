@@ -87,7 +87,7 @@ roles:
       React to these callbacks immediately — check the result and take the next
       appropriate action (forward to another agent, report to the human, etc.).
     max_tokens: 8192
-    scopes: [agent:list, agent:delegate, agent:spawn, memory:read, memory:write]
+    scopes: [agent:list, agent:delegate, agent:spawn, memory:read, memory:write, code:exec]
     caps: [orchestration, planning]
     allowed_tools:
       - Edit
