@@ -1,11 +1,60 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import importlib
+import json
+import os
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from harness_claw.runtime import rpc_stub
+
+
+def test_call_preserves_explicit_empty_args_dict():
+    """Passing args={} must be preserved as {}, not defaulted via `or {}`."""
+    captured: dict = {}
+
+    async def server_main(sock_path: str) -> None:
+        async def handle(reader, writer):
+            line = await reader.readline()
+            captured["req"] = json.loads(line.decode())
+            writer.write(b'{"result": null}\n')
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_unix_server(handle, path=sock_path)
+        async with server:
+            await asyncio.sleep(1)  # serve briefly
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sock_path = str(Path(tmp) / "rpc.sock")
+        loop = asyncio.new_event_loop()
+        server_thread = threading.Thread(
+            target=lambda: loop.run_until_complete(server_main(sock_path)),
+            daemon=True,
+        )
+        server_thread.start()
+
+        # Wait for socket to exist
+        for _ in range(50):
+            if Path(sock_path).exists():
+                break
+            time.sleep(0.02)
+
+        os.environ["HARNESSCLAW_RPC_SOCKET"] = sock_path
+        import importlib as _importlib
+        from harness_claw.runtime import rpc_stub as _rpc_stub
+        _importlib.reload(_rpc_stub)
+
+        _rpc_stub._call("t", {})  # explicit empty dict
+        server_thread.join(timeout=2)
+
+    assert captured["req"] == {"tool": "t", "args": {}}
 
 
 def test_stub_module_parses_as_python():

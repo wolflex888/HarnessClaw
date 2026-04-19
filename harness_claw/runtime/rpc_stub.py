@@ -37,7 +37,7 @@ class _RPCClient:
         if self._sock is None:
             self._connect()
         assert self._sock is not None
-        req = json.dumps({"tool": name, "args": args or {}}) + "\n"
+        req = json.dumps({"tool": name, "args": {} if args is None else args}) + "\n"
         self._sock.sendall(req.encode())
         line = self._readline()
         resp = json.loads(line)
