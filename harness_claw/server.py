@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -50,9 +52,18 @@ _tools_db = _root / "tools.db"
 registry = RoleRegistry(_agents_yaml)
 cfg = registry.gateway_config
 
+_FREE_MODE = os.environ.get("HARNESSCLAW_FREE", "").lower() in {"1", "true", "yes", "on"}
+if _FREE_MODE:
+    sys.stderr.write(
+        "\n"
+        "!!! HARNESSCLAW_FREE=1 — DANGEROUSLY skipping ALL permission checks !!!\n"
+        "    Every token is treated as if it has every scope. Do not use in production.\n"
+        "\n"
+    )
+
 store = SessionStore(_sessions_json)
 token_store = TokenStore()
-policy = LocalPolicyEngine()
+policy = LocalPolicyEngine(free_mode=_FREE_MODE)
 connector = LocalConnector()
 gateway_connector = GatewayConnector(
     bootstrap_token=cfg.gateway_bootstrap_token,
