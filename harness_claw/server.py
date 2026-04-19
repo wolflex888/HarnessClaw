@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from mcp.server.sse import SseServerTransport
@@ -89,6 +89,18 @@ runner = JobRunner(
     tool_registry=tool_registry,
 )
 
+async def _spawn_agent(role_id: str, working_dir: str) -> str:
+    """Spawn a new agent session. Used by GatewayMCP.agent_spawn and execute_plan."""
+    role = registry.get(role_id)
+    if role is None:
+        raise ValueError(f"unknown role: {role_id!r}")
+    from harness_claw.session import Session
+    session = Session(role_id=role_id, working_dir=working_dir, model=role.model)
+    store.save(session)
+    await runner.start_session(session)
+    return session.session_id
+
+
 gateway_mcp = GatewayMCP(
     token_store=token_store,
     policy=policy,
@@ -96,6 +108,7 @@ gateway_mcp = GatewayMCP(
     broker=broker,
     memory=memory,
     audit=audit,
+    spawn_callback=_spawn_agent,
     workflow_engine=workflow_engine,
     event_bus=event_bus,
     tool_registry=tool_registry,
@@ -149,8 +162,22 @@ async def startup() -> None:
     runner._broker = broker
 
     for session in store.all():
-        if session.status != "killed":
-            await runner.start_session(session)
+        if session.status == "killed":
+            continue
+        role = registry.get(session.role_id)
+        if role is None or role.provider != "terminal":
+            # Agent sessions are transient — kill stale ones instead of restarting
+            session.status = "killed"
+            store.save(session)
+            continue
+        await runner.start_session(session)
+
+    # Issue a bootstrap token with orchestrator scopes and write to .mcp.json
+    orchestrator_role = registry.get("orchestrator")
+    if orchestrator_role is not None:
+        boot_scopes = orchestrator_role.scopes
+        boot_token = token_store.issue("bootstrap", boot_scopes)
+        runner._write_mcp_config(str(_root), boot_token)
 
     # Start scheduler poll loop and do an initial drain
     await broker.scheduler.start_poll_loop()
@@ -246,6 +273,83 @@ async def get_agent_status(session_id: str) -> dict[str, Any]:
     return status.to_dict()
 
 
+@app.get("/agents/output")
+async def stream_all_agent_output() -> StreamingResponse:
+    """SSE stream of PTY output from ALL running agent sessions.
+    Dynamically picks up agents spawned after the connection is opened.
+    Use: curl -N localhost:8000/agents/output
+    """
+    queue: asyncio.Queue[tuple[str, bytes]] = asyncio.Queue()
+    tracked: dict[str, tuple[Any, Any]] = {}  # sid → (pty, cb)
+
+    def _attach_new_sessions() -> None:
+        for sid, pty in list(runner._pty_sessions.items()):
+            if sid in tracked:
+                continue
+            session = store.get(sid)
+            if session and session.role_id != "terminal" and pty.is_alive():
+                _sid = sid
+
+                async def on_output(data: bytes, __sid=_sid) -> None:
+                    await queue.put((__sid, data))
+
+                pty.add_output_callback(on_output)
+                tracked[sid] = (pty, on_output)
+
+    _attach_new_sessions()
+
+    async def generate():
+        try:
+            while True:
+                try:
+                    sid, data = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    session = store.get(sid)
+                    role = session.role_id if session else "unknown"
+                    name = session.name if session else ""
+                    label = name or f"{role}:{sid[:8]}"
+                    text = data.decode("utf-8", errors="replace")
+                    yield f"event: output\ndata: [{label}] {text}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                # Check for newly spawned agents on each iteration
+                _attach_new_sessions()
+        finally:
+            for pty, cb in tracked.values():
+                pty.remove_output_callback(cb)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/agent/{session_id}/output")
+async def stream_agent_output(session_id: str) -> StreamingResponse:
+    """SSE stream of raw PTY output for a session. Use: curl -N localhost:8000/agent/<id>/output"""
+    pty = runner._pty_sessions.get(session_id)
+    if pty is None:
+        raise HTTPException(status_code=404, detail="session not found or not running")
+
+    queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def on_output(data: bytes) -> None:
+        await queue.put(data)
+
+    pty.add_output_callback(on_output)
+
+    async def generate():
+        try:
+            while pty.is_alive():
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    # Send as SSE with base64-encoded data
+                    text = data.decode("utf-8", errors="replace")
+                    yield f"data: {text}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            pty.remove_output_callback(on_output)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 # External agent registration endpoints
 class ExternalRegisterRequest(BaseModel):
     bootstrap_token: str
@@ -285,6 +389,19 @@ app.include_router(ws_api.make_router(runner, store))
 @app.get("/api/tasks")
 def list_tasks_endpoint() -> list[dict[str, Any]]:
     return [t.to_dict() for t in broker.list_tasks()]
+
+
+@app.delete("/api/tasks", status_code=200)
+def delete_all_tasks() -> dict[str, Any]:
+    count = task_store.delete_all()
+    return {"deleted": count}
+
+
+@app.delete("/api/tasks/{task_id}", status_code=200)
+def delete_task(task_id: str) -> dict[str, Any]:
+    if not task_store.delete(task_id):
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"deleted": True}
 
 
 @app.post("/api/tasks/{task_id}/retry")

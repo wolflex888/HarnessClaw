@@ -44,6 +44,7 @@ def make_runner(connector: LocalConnector, roles: list[RoleConfig]) -> MagicMock
     runner = MagicMock()
     runner.start_session = AsyncMock(side_effect=fake_start)
     runner.kill_session = MagicMock()
+    runner._pty_sessions = {}  # real dict so _wait_until_ready short-circuits
     return runner
 
 
@@ -112,6 +113,7 @@ async def test_acquire_timeout_raises():
 
     runner = MagicMock()
     runner.start_session = AsyncMock(side_effect=slow_start)
+    runner._pty_sessions = {}
     registry = make_registry(roles)
     pool = AgentPool(runner=runner, connector=connector, registry=registry,
                      working_dir="/tmp", acquire_timeout=1)

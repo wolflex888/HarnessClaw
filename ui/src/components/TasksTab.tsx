@@ -112,7 +112,7 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry,
       >
         <span className="text-gray-500 text-xs w-4">{expanded ? '▼' : '▶'}</span>
         <span className="text-xs text-gray-400 font-mono w-20 truncate">{task.task_id.slice(0, 8)}</span>
-        <span className="text-sm text-gray-200 flex-1 truncate">{agentName}</span>
+        <span className="text-sm text-gray-200 flex-1 truncate">{task.instructions || agentName}</span>
         <div className="w-24">
           {task.status === 'running' && <ProgressBar pct={task.progress_pct} />}
         </div>
@@ -128,6 +128,7 @@ function TaskRow({ task, sessions, terminalWriters, expanded, onToggle, onRetry,
         <div className="p-3 bg-gray-900 border-t border-gray-700 flex flex-col gap-2">
           <div className="flex gap-4 text-xs text-gray-500">
             <span>from: {task.delegated_by.slice(0, 8)}</span>
+            <span>agent: {agentName}</span>
             <span>caps: {task.caps_requested.join(', ')}</span>
             {task.progress_msg && <span>{task.progress_msg}</span>}
           </div>

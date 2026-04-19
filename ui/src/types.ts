@@ -86,7 +86,7 @@ export interface AgentStatus {
 export type WSIncoming =
   | { type: 'output'; session_id: string; data: string }
   | { type: 'cost_update'; session_id: string; cost_usd: number; input_tokens: number; output_tokens: number }
-  | { type: 'session_update'; session_id: string; name: string; status: 'idle' | 'running' | 'killed' }
+  | { type: 'session_update'; session_id: string; name: string; status: 'idle' | 'running' | 'killed'; role_id?: string; working_dir?: string; model?: string; input_tokens?: number; output_tokens?: number }
   | { type: 'session_deleted'; session_id: string }
   | { type: 'task.created'; task: TaskRecord }
   | { type: 'task.updated'; task: TaskRecord }

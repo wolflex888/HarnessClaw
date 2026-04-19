@@ -13,6 +13,7 @@ import { MemoryTab } from './components/MemoryTab'
 import { AuditTab } from './components/AuditTab'
 import { WorkflowsTab } from './components/WorkflowsTab'
 import { RegisteredToolsTab } from './components/RegisteredToolsTab'
+import { AgentsMonitorTab } from './components/AgentsMonitorTab'
 
 function emptySessionState(data: {
   session_id: string; role_id: string; working_dir: string; model: string;
@@ -106,8 +107,26 @@ export default function App() {
     } else if (msg.type === 'session_update') {
       setSessions(prev => {
         const existing = prev[msg.session_id]
-        if (!existing) return prev
-        return { ...prev, [msg.session_id]: { ...existing, name: msg.name, status: msg.status } }
+        if (existing) {
+          return { ...prev, [msg.session_id]: { ...existing, name: msg.name, status: msg.status } }
+        }
+        // New session spawned (e.g. by execute_plan) — create entry from broadcast data
+        if (msg.role_id) {
+          return {
+            ...prev,
+            [msg.session_id]: emptySessionState({
+              session_id: msg.session_id,
+              role_id: msg.role_id,
+              working_dir: msg.working_dir ?? '',
+              model: msg.model ?? '',
+              name: msg.name ?? '',
+              status: msg.status,
+              input_tokens: msg.input_tokens ?? 0,
+              output_tokens: msg.output_tokens ?? 0,
+            }),
+          }
+        }
+        return prev
       })
     } else if (msg.type === 'session_deleted') {
       setSessions(prev => {
@@ -271,6 +290,16 @@ export default function App() {
                       })}
                     />
                   ))}
+                  {tab === 'agents' && (
+                    <AgentsMonitorTab
+                      sessions={sessions}
+                      agentStatuses={agentStatuses}
+                      tasks={Object.values(tasks)}
+                      activeSessionId={activeSessionId}
+                      onSelectSession={(id) => { setActiveSessionId(id); setActiveTab('work') }}
+                      onKill={handleKill}
+                    />
+                  )}
                   {tab === 'tasks' && (
                     <TasksTab
                       tasks={Object.values(tasks)}

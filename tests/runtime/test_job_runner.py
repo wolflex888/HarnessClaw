@@ -53,7 +53,7 @@ async def test_start_session_spawns_pty():
 
         MockPty.assert_called_once_with("s1")
         mock_pty.start.assert_called_once_with(
-            ["claude", "--system-prompt", "You are helpful.", "--model", "claude-sonnet-4-6"],
+            ["claude", "--enable-auto-mode", "--system-prompt", "You are helpful.", "--model", "claude-sonnet-4-6"],
             "/tmp", extra_env=None,
         )
 

@@ -36,8 +36,8 @@ class LocalDispatcher:
         if write_fn is None:
             raise RuntimeError(f"No writer registered for session {agent.session_id!r}")
         payload = (
-            f"\n[HARNESS_TASK:{task.task_id}]\n"
-            f"{task.instructions}\n"
+            f"[HARNESS_TASK:{task.task_id}]\n"
+            f"{task.instructions}\r"
         ).encode()
         write_fn(payload)
 

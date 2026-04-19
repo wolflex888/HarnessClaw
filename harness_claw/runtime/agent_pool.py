@@ -24,12 +24,14 @@ class AgentPool:
         connector: LocalConnector,
         registry: RoleRegistry,
         working_dir: str,
+        plan_name: str = "",
         acquire_timeout: float = 30,
     ) -> None:
         self._runner = runner
         self._connector = connector
         self._registry = registry
         self._working_dir = working_dir
+        self._plan_name = plan_name
         self._acquire_timeout = acquire_timeout
         self._owned: dict[str, str] = {}  # role_id → session_id
 
@@ -61,10 +63,12 @@ class AgentPool:
             raise ValueError(f"no role in registry matches caps {caps!r}")
 
         # Spawn the PTY agent
+        name = f"{self._plan_name} — {role.id}" if self._plan_name else role.id
         session = Session(
             role_id=role.id,
             working_dir=self._working_dir,
             model=role.model,
+            name=name,
         )
         session_id = session.session_id
         await self._runner.start_session(session)
@@ -83,8 +87,51 @@ class AgentPool:
                 )
             await asyncio.sleep(0.5)
 
+        # Wait for the agent (e.g. Claude Code) to finish initializing.
+        # We detect readiness by waiting for PTY output to settle: once
+        # output stops arriving for `_READY_QUIET` seconds after at least
+        # one chunk, the agent is likely showing its input prompt.
+        await self._wait_until_ready(session_id, deadline - loop.time())
+
         self._owned[role.id] = session_id
         return session_id
+
+    _READY_QUIET = 2.0  # seconds of silence after output to consider agent ready
+
+    async def _wait_until_ready(self, session_id: str, remaining: float) -> None:
+        """Wait for the PTY to produce output and then go quiet, indicating
+        the agent has finished booting and is showing its input prompt."""
+        pty = self._runner._pty_sessions.get(session_id)
+        if pty is None:
+            return
+
+        got_output = False
+        last_output_time = 0.0
+        loop = asyncio.get_running_loop()
+
+        async def _on_output(data: bytes) -> None:
+            nonlocal got_output, last_output_time
+            got_output = True
+            last_output_time = loop.time()
+
+        pty.add_output_callback(_on_output)
+        try:
+            timeout = max(remaining, 5)
+            end = loop.time() + timeout
+            while loop.time() < end:
+                await asyncio.sleep(0.5)
+                if got_output and (loop.time() - last_output_time) >= self._READY_QUIET:
+                    _logger.info(
+                        "AgentPool: agent %s ready (output settled after %.1fs)",
+                        session_id, self._READY_QUIET,
+                    )
+                    return
+            _logger.warning(
+                "AgentPool: agent %s readiness timeout (%.0fs) — proceeding anyway",
+                session_id, timeout,
+            )
+        finally:
+            pty.remove_output_callback(_on_output)
 
     async def release_all(self) -> None:
         """Kill all sessions owned by this pool. Logs and continues on error."""

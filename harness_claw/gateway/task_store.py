@@ -273,6 +273,18 @@ class SqliteTaskStore:
             )
         return cursor.rowcount
 
+    def delete(self, task_id: str) -> bool:
+        """Delete a single task by ID. Returns True if deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+        return cursor.rowcount > 0
+
+    def delete_all(self) -> int:
+        """Delete all tasks. Returns count deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM tasks")
+        return cursor.rowcount
+
     def expire(self, days: int) -> int:
         """Delete tasks with updated_at older than `days` days. Returns count deleted."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

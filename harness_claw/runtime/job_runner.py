@@ -149,7 +149,7 @@ class JobRunner:
         if is_terminal:
             cmd = [os.environ.get("SHELL", "/bin/zsh")]
         else:
-            cmd = ["claude", "--system-prompt", role.system_prompt, "--model", role.model] + mcp_args
+            cmd = ["claude", "--enable-auto-mode", "--system-prompt", role.system_prompt, "--model", role.model] + mcp_args
 
         pty = PtySession(session_id)
 
@@ -201,6 +201,11 @@ class JobRunner:
         await self._broadcast({
             "type": "session_update", "session_id": session_id,
             "status": "running", "name": session.name,
+            "role_id": session.role_id,
+            "working_dir": session.working_dir,
+            "model": session.model,
+            "input_tokens": session.input_tokens,
+            "output_tokens": session.output_tokens,
         })
 
         # Cost polling (agent sessions only)

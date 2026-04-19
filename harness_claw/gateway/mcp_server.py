@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +15,6 @@ from harness_claw.gateway.memory import MemoryStore
 from harness_claw.gateway.policy import PolicyEngine
 from harness_claw.gateway.tool_registry import ToolRegistry
 from harness_claw.gateway.tool_store import ToolDef
-from harness_claw.runtime.plan_executor import PlanExecutor
 
 
 class PermissionError(Exception):
@@ -205,57 +205,76 @@ class GatewayMCP:
         if self._event_bus is None:
             raise RuntimeError("execute_plan requires event_bus — not configured")
 
-        progress_log: list[str] = []
+        if self._runner is None or self._pool_connector is None or self._registry is None:
+            raise RuntimeError("execute_plan requires runner, pool_connector, and registry")
 
-        async def on_progress(msg: str) -> None:
-            progress_log.append(msg)
+        import asyncio
+        from harness_claw.gateway.event_bus import Event
 
-        pool = None
-        if (
-            self._runner is not None
-            and self._pool_connector is not None
-            and self._registry is not None
-        ):
-            from harness_claw.runtime.agent_pool import AgentPool
-            _git = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=str(Path(plan_path).parent),
-                capture_output=True,
-                text=True,
-            )
-            working_dir = _git.stdout.strip() if _git.returncode == 0 else str(Path(plan_path).parent)
-            pool = AgentPool(
-                runner=self._runner,
-                connector=self._pool_connector,
-                registry=self._registry,
-                working_dir=working_dir,
-            )
+        # Resolve working directory from git root
+        _git = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(Path(plan_path).parent),
+            capture_output=True,
+            text=True,
+        )
+        working_dir = _git.stdout.strip() if _git.returncode == 0 else str(Path(plan_path).parent)
 
-        executor = PlanExecutor(
-            broker=self._broker,
-            event_bus=self._event_bus,
-            on_progress=on_progress,
-            pool=pool,
+        # Spawn a planner agent
+        planner_session_id = await self._spawn_callback(
+            role_id="planner", working_dir=working_dir,
         )
 
-        try:
-            summary = await executor.execute(plan_path)
-            self._audit.log(AuditEvent(
-                subject=subject, operation="execute_plan", resource=plan_path,
-                outcome="allowed", details={"plan_path": plan_path},
-            ))
-        except Exception as exc:
-            self._audit.log(AuditEvent(
-                subject=subject, operation="execute_plan", resource=plan_path,
-                outcome="error", details={"reason": str(exc)},
-            ))
-            raise
-        finally:
-            if pool is not None:
-                await pool.release_all()
+        self._audit.log(AuditEvent(
+            subject=subject, operation="execute_plan", resource=plan_path,
+            outcome="allowed", details={
+                "plan_path": plan_path,
+                "planner_session_id": planner_session_id,
+            },
+        ))
 
-        progress_output = "\n".join(progress_log)
-        return f"{progress_output}\n\n---\n\n{summary}"
+        # Delegate the plan to the planner agent
+        plan_text = Path(plan_path).read_text()
+        task_id = await self._broker.delegate(
+            delegated_by=subject,
+            caps=["planning"],
+            instructions=(
+                f"Execute the following plan. Read the plan, spawn the agents you need "
+                f"(code-writer, spec-reviewer, code-reviewer), and delegate tasks to them.\n\n"
+                f"Plan file: {plan_path}\n"
+                f"Working directory: {working_dir}\n\n"
+                f"---\n\n{plan_text}"
+            ),
+            callback=True,
+        )
+
+        # Wait for the planner to complete
+        done = asyncio.Event()
+
+        async def on_complete(_: Event) -> None:
+            done.set()
+
+        sub_ok = await self._event_bus.subscribe(f"task:{task_id}:completed", on_complete)
+        sub_fail = await self._event_bus.subscribe(f"task:{task_id}:failed", on_complete)
+
+        # Guard against already-completed
+        existing = self._broker.get_task(task_id)
+        if existing and existing.status in ("completed", "failed"):
+            done.set()
+
+        await done.wait()
+        await self._event_bus.unsubscribe(sub_ok)
+        await self._event_bus.unsubscribe(sub_fail)
+
+        task = self._broker.get_task(task_id)
+        if task and task.status == "completed":
+            result = task.result
+            if isinstance(result, dict):
+                return json.dumps(result, indent=2)
+            return str(result or "Plan completed")
+        else:
+            error = task.result if task else "unknown error"
+            return f"Plan failed: {error}"
 
     async def tool_register(
         self,
