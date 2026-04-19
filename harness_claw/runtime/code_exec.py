@@ -45,6 +45,7 @@ async def run_rpc_script(
         (tmp / "script.py").write_text(script)
 
         tool_call_count = 0
+        BLOCKED_TOOLS = {"code.exec"}
 
         async def handle_client(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -64,6 +65,20 @@ async def run_rpc_script(
                     except Exception as e:
                         writer.write(
                             (json.dumps({"error": f"bad request: {e}"}) + "\n").encode()
+                        )
+                        await writer.drain()
+                        continue
+
+                    if name in BLOCKED_TOOLS:
+                        writer.write(
+                            (json.dumps({"error": f"{name} is not callable from code.exec"}) + "\n").encode()
+                        )
+                        await writer.drain()
+                        continue
+
+                    if tool_call_count >= max_tool_calls:
+                        writer.write(
+                            (json.dumps({"error": f"max_tool_calls ({max_tool_calls}) exceeded"}) + "\n").encode()
                         )
                         await writer.drain()
                         continue

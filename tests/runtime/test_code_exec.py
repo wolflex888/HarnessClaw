@@ -127,3 +127,55 @@ def test_stub_module_uses_only_stdlib():
             imports.append(node.module)
     stdlib = {"json", "os", "socket"}
     assert set(imports) <= stdlib, f"non-stdlib import: {set(imports) - stdlib}"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — enforcement: max_tool_calls, timeout, blocked tools
+# ---------------------------------------------------------------------------
+
+
+async def test_max_tool_calls_returns_error_to_script():
+    async def dispatch(token: str, name: str, args: dict):
+        return "ok"
+
+    script = (
+        "import harnessclaw_tools as h\n"
+        "for i in range(5):\n"
+        "    try:\n"
+        "        print(i, h._call('x'))\n"
+        "    except RuntimeError as e:\n"
+        "        print('stop:', e); break\n"
+    )
+    result = await run_rpc_script(script, token="t", dispatch=dispatch, max_tool_calls=2)
+    assert result.exit_code == 0
+    assert "stop: max_tool_calls" in result.stdout
+    assert result.tool_calls == 2
+
+
+async def test_timeout_kills_long_running_script():
+    async def dispatch(token: str, name: str, args: dict):
+        return None
+
+    script = "import time; time.sleep(10); print('never')\n"
+    result = await run_rpc_script(
+        script, token="t", dispatch=dispatch, timeout_seconds=0.5
+    )
+    assert result.timed_out is True
+    assert result.exit_code == -1
+    assert "never" not in result.stdout
+
+
+async def test_script_cannot_call_code_exec_recursively():
+    async def dispatch(token: str, name: str, args: dict):
+        return "ok"  # would succeed if not blocked
+
+    script = (
+        "import harnessclaw_tools as h\n"
+        "try:\n"
+        "    h._call('code.exec', {'script': 'print(1)'})\n"
+        "except RuntimeError as e:\n"
+        "    print('blocked:', e)\n"
+    )
+    result = await run_rpc_script(script, token="t", dispatch=dispatch)
+    assert result.exit_code == 0
+    assert "blocked: code.exec is not callable" in result.stdout
