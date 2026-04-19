@@ -79,7 +79,7 @@ dispatcher = LocalDispatcher()
 event_bus = LocalEventBus()
 task_store = SqliteTaskStore(_tasks_db)
 broker = Broker(connectors=[connector, gateway_connector], dispatcher=dispatcher, event_bus=event_bus, task_store=task_store)
-_redaction_config = RedactionConfig.load()
+_redaction_config = RedactionConfig.load(_root / "redaction.yaml")
 _redactor = RegexRedactor(_redaction_config)
 
 _audit_inner = AuditLogger(_audit_jsonl)

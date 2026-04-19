@@ -5,20 +5,20 @@
 enabled: true
 
 categories:
-  anthropic_key: on
-  openai_key: on
-  github_token: on
-  aws_access_key: on
-  aws_secret_key: on
-  gcp_key: on
-  slack_webhook: on
-  jwt: on
-  ssh_private_key: on
-  email: off
-  phone_us: off
-  credit_card: off
-  ssn_us: off
-  user_path: off
+  anthropic_key: true
+  openai_key: true
+  github_token: true
+  aws_access_key: true
+  aws_secret_key: true
+  gcp_key: true
+  slack_webhook: true
+  jwt: true
+  ssh_private_key: true
+  email: false
+  phone_us: false
+  credit_card: false
+  ssn_us: false
+  user_path: false
 
 # custom_rules:
 #   - name: internal_api_token
