@@ -74,3 +74,18 @@ def test_redactor_failure_falls_open_with_error_entry(tmp_path: Path):
     assert "sk-ant-api03" in written
     assert '"outcome": "error"' in written
     assert "redaction_failed" in written
+
+
+def test_event_id_and_timestamp_preserved(tmp_path: Path):
+    import json as _json
+    inner = AuditLogger(tmp_path / "a.jsonl")
+    wrapper = RedactingAuditLogger(inner, _redactor())
+    event = AuditEvent(
+        subject="alice", operation="memory.set", resource="ns/k",
+        outcome="allowed", details={"value": "ok"},
+    )
+    wrapper.log(event)
+    line = (tmp_path / "a.jsonl").read_text().strip()
+    written = _json.loads(line)
+    assert written["event_id"] == event.event_id
+    assert written["timestamp"] == event.timestamp

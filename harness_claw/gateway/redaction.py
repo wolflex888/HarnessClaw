@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
+
+from harness_claw.gateway.audit import AuditEvent, AuditLogger
 
 log = logging.getLogger(__name__)
 
@@ -174,9 +176,6 @@ class RegexRedactor:
         return s
 
 
-from harness_claw.gateway.audit import AuditEvent, AuditLogger
-
-
 class RedactingAuditLogger:
     """Drop-in replacement for `AuditLogger` that scrubs `details` before write.
 
@@ -196,20 +195,12 @@ class RedactingAuditLogger:
             # that bypasses the redactor (prevents infinite recursion if the
             # redactor itself is the bug).
             self._inner.log(event)
-            self._inner.log(AuditEvent(
-                subject=event.subject,
-                operation=event.operation,
-                resource=event.resource,
+            self._inner.log(replace(
+                event,
                 outcome="error",
-                details={"reason": "redaction_failed", "error": str(e)},
+                details={"reason": "redaction_failed", "error": str(e), "original_event_id": event.event_id},
             ))
             log.warning("redaction failed for event %s: %s", event.event_id, e)
             return
 
-        self._inner.log(AuditEvent(
-            subject=event.subject,
-            operation=event.operation,
-            resource=event.resource,
-            outcome=event.outcome,
-            details=scrubbed_details,
-        ))
+        self._inner.log(replace(event, details=scrubbed_details))
