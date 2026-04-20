@@ -14,6 +14,7 @@ from harness_claw.redact_backfill import (
 )
 
 
+
 def _seed_audit(path: Path) -> None:
     path.write_text(
         json.dumps({
@@ -124,3 +125,59 @@ async def test_missing_audit_file_is_not_an_error(tmp_path: Path):
     )
     assert report.audit_records_scanned == 0
     assert report.memory_entries_scanned == 2
+
+
+@pytest.mark.asyncio
+async def test_apply_refreshes_vector_embeddings(tmp_path: Path):
+    audit = tmp_path / "audit.jsonl"
+    memory_db = tmp_path / "memory.db"
+    # Skip audit seeding — test focuses on memory.
+    audit.write_text("")
+    store = SqliteMemoryStore(memory_db)
+    await store.set(
+        "ns", "k",
+        value="token sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-",
+        summary=None, tags=[],
+    )
+
+    redactor = RegexRedactor(RedactionConfig())
+    await run_backfill(
+        redactor=redactor, audit_path=audit, memory_path=memory_db, apply=True,
+    )
+
+    # After redaction, searching for the plaintext secret should NOT surface the row,
+    # because both the FTS index and the vector embedding were recomputed over the
+    # redacted text. We search for the exact pre-redaction substring — if embeddings
+    # were stale, the row would still rank highly by vector similarity.
+    results = await store.search("ns", "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz", top_k=5)
+    for entry in results:
+        assert "sk-ant-" not in entry.value, (
+            "Row still contains the original secret — redaction did not apply to stored row."
+        )
+    # Verify the row exists and is redacted.
+    entry = await store.get("ns", "k")
+    assert entry is not None
+    assert "[REDACTED:anthropic_key]" in entry.value
+
+
+@pytest.mark.asyncio
+async def test_count_categories_sums_across_records(tmp_path: Path):
+    audit = tmp_path / "audit.jsonl"
+    memory_db = tmp_path / "memory.db"
+    # Seed TWO audit records each containing one anthropic key.
+    records = []
+    for i in range(2):
+        records.append(json.dumps({
+            "event_id": f"e{i}", "timestamp": "2026-04-19T00:00:00Z",
+            "subject": "alice", "operation": "memory.set",
+            "resource": f"ns/k{i}", "outcome": "allowed",
+            "details": {"value": f"sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-"},
+        }))
+    audit.write_text("\n".join(records) + "\n")
+    SqliteMemoryStore(memory_db)  # empty, creates schema
+
+    redactor = RegexRedactor(RedactionConfig())
+    report = await run_backfill(
+        redactor=redactor, audit_path=audit, memory_path=memory_db, apply=False,
+    )
+    assert report.audit_by_category.get("anthropic_key") == 2

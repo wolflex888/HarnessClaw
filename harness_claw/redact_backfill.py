@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from harness_claw.gateway.memory import Embedder
 from harness_claw.gateway.redaction import Redactor
+
+_TAG_RE = re.compile(r"\[REDACTED:([a-z_]+)\]")
 
 
 @dataclass
@@ -21,18 +25,14 @@ class BackfillReport:
 
 
 def _count_categories(before: str, after: str, into: dict[str, int]) -> None:
-    # Rough category accounting: count every [REDACTED:<name>] token that
-    # appears in `after` but not in `before`.
-    import re
-    tag = re.compile(r"\[REDACTED:([a-z_]+)\]")
+    tag = _TAG_RE
+    names_seen: set[str] = set()
     for m in tag.finditer(after):
-        name = m.group(1)
-        # Only count tokens that weren't already present.
-        before_count = before.count(f"[REDACTED:{name}]")
-        after_count = after.count(f"[REDACTED:{name}]")
-        delta = after_count - before_count
-        if delta > 0 and into.get(name, 0) < after_count:
-            into[name] = into.get(name, 0) + 1
+        names_seen.add(m.group(1))
+    for name in names_seen:
+        delta = after.count(f"[REDACTED:{name}]") - before.count(f"[REDACTED:{name}]")
+        if delta > 0:
+            into[name] = into.get(name, 0) + delta
 
 
 async def _backfill_audit(
@@ -42,28 +42,34 @@ async def _backfill_audit(
         return
 
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with path.open("r") as src, tmp.open("w") as dst:
-        for line in src:
-            if not line.strip():
-                dst.write(line)
-                continue
-            report.audit_records_scanned += 1
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                dst.write(line)
-                continue
+    with path.open("r") as src:
+        dst = tmp.open("w")
+        try:
+            for line in src:
+                if not line.strip():
+                    dst.write(line)
+                    continue
+                report.audit_records_scanned += 1
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    dst.write(line)
+                    continue
 
-            original_details = record.get("details") or {}
-            new_details = redactor.redact(original_details)
-            if new_details != original_details:
-                report.audit_records_changed += 1
-                _count_categories(
-                    json.dumps(original_details), json.dumps(new_details),
-                    report.audit_by_category,
-                )
-                record["details"] = new_details
-            dst.write(json.dumps(record) + "\n")
+                original_details = record.get("details") or {}
+                new_details = redactor.redact(original_details)
+                if new_details != original_details:
+                    report.audit_records_changed += 1
+                    _count_categories(
+                        json.dumps(original_details), json.dumps(new_details),
+                        report.audit_by_category,
+                    )
+                    record["details"] = new_details
+                dst.write(json.dumps(record) + "\n")
+            dst.flush()
+            os.fsync(dst.fileno())
+        finally:
+            dst.close()
 
     if apply and report.audit_records_changed > 0:
         bak = path.with_suffix(path.suffix + ".bak")
@@ -79,6 +85,7 @@ def _check_memory_lock(path: Path) -> None:
         return
     conn = sqlite3.connect(str(path))
     try:
+        conn.execute("PRAGMA busy_timeout=0")
         conn.execute("BEGIN IMMEDIATE")
         conn.rollback()
     except sqlite3.OperationalError as e:
@@ -122,10 +129,18 @@ async def _backfill_memory(
                 updates.append((new_value, new_summary, row["namespace"], row["key"]))
 
         if apply and updates:
-            conn.executemany(
-                "UPDATE memory SET value=?, summary=? WHERE namespace=? AND key=?",
-                updates,
-            )
+            embedder = Embedder()
+            for new_value, new_summary, namespace, key in updates:
+                conn.execute(
+                    "UPDATE memory SET value=?, summary=? WHERE namespace=? AND key=?",
+                    (new_value, new_summary, namespace, key),
+                )
+                embed_text = f"{new_value} {new_summary}" if new_summary else new_value
+                new_embedding = embedder.embed(embed_text)
+                conn.execute(
+                    "INSERT OR REPLACE INTO memory_vectors (namespace, key, embedding) VALUES (?, ?, ?)",
+                    (namespace, key, Embedder.to_blob(new_embedding)),
+                )
             conn.commit()
     finally:
         conn.close()
