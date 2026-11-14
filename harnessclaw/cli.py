@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--port", type=int, default=8765)
     c.set_defaults(func=cmd_init)
 
-    c = sub.add_parser("serve", help="run the memory server, the assistant, and Telegram if set up")
+    c = sub.add_parser("serve", help="run the memory server, the assistant, and Discord if set up")
     c.set_defaults(func=cmd_serve)
 
     c = sub.add_parser("status", help="what the server holds and how it's configured")
@@ -99,16 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("message", nargs="?", help="one message; leave out for an interactive chat")
     c.set_defaults(func=cmd_chat)
 
-    c = sub.add_parser("telegram", help="set up the Telegram bot")
+    c = sub.add_parser("discord", help="set up the Discord bot")
     csub = c.add_subparsers(metavar="action")
-    a = csub.add_parser("setup", help="save the bot token and allow your Telegram account")
-    a.set_defaults(func=cmd_telegram_setup)
-    a = csub.add_parser("allow", help="allow a Telegram user id")
+    a = csub.add_parser("setup", help="save the bot token and allow your Discord account")
+    a.set_defaults(func=cmd_discord_setup)
+    a = csub.add_parser("allow", help="allow a Discord user id")
     a.add_argument("user_id", type=int)
-    a.set_defaults(func=cmd_telegram_allow)
-    a = csub.add_parser("disallow", help="stop answering a Telegram user id")
+    a.set_defaults(func=cmd_discord_allow)
+    a = csub.add_parser("disallow", help="stop answering a Discord user id")
     a.add_argument("user_id", type=int)
-    a.set_defaults(func=cmd_telegram_disallow)
+    a.set_defaults(func=cmd_discord_disallow)
 
     c = sub.add_parser("hook", help="hook entry points (called by harnesses, not by you)")
     csub = c.add_subparsers(metavar="harness")
@@ -139,7 +139,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     print("Next:")
     print("  harnessclaw serve                      # start the server")
     print("  harnessclaw chat                       # talk to the assistant")
-    print("  harnessclaw telegram setup             # talk to it from Telegram")
+    print("  harnessclaw discord setup              # talk to it from Discord")
     print("  harnessclaw connect claude-code        # share the memory with Claude Code")
     return 0
 
@@ -286,41 +286,43 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print("\n" + client.chat(text))
 
 
-def cmd_telegram_setup(args: argparse.Namespace) -> int:
-    from harnessclaw.channels.telegram import pair_telegram
-
-    config = Config.load()
-    print("1. In Telegram, open @BotFather, send /newbot, and follow the steps.")
-    print("2. Paste the token it gives you (it looks like 123456:ABC-DEF...).")
+def cmd_discord_setup(args: argparse.Namespace) -> int:
+    import asyncio
     import getpass
 
+    from harnessclaw.channels.discord_bot import pair_discord
+
+    Config.load()  # fail early if there's no config yet
+    print("1. Go to https://discord.com/developers/applications, click New Application,")
+    print("   then open Bot and click Reset Token to get the bot token.")
+    print("2. Paste the token here.")
     token = getpass.getpass("Bot token: ").strip()
     if not token:
         print("No token given; nothing changed.")
         return 1
-    user = pair_telegram(token, print)
+    user = asyncio.run(pair_discord(token, print))
     config = Config.load()
-    config.telegram_bot_token = token
-    if user is not None and user["id"] not in config.telegram_allowed_users:
-        config.telegram_allowed_users.append(user["id"])
+    config.discord_bot_token = token
+    if user is not None and user["id"] not in config.discord_allowed_users:
+        config.discord_allowed_users.append(user["id"])
     config.save()
     print(f"\nSaved to {config.path}.")
-    print("Restart `harnessclaw serve` and message your bot.")
+    print("Restart `harnessclaw serve` and DM your bot.")
     return 0
 
 
-def cmd_telegram_allow(args: argparse.Namespace) -> int:
+def cmd_discord_allow(args: argparse.Namespace) -> int:
     config = Config.load()
-    if args.user_id not in config.telegram_allowed_users:
-        config.telegram_allowed_users.append(args.user_id)
+    if args.user_id not in config.discord_allowed_users:
+        config.discord_allowed_users.append(args.user_id)
         config.save()
     print(f"Allowed {args.user_id}. A running server picks this up right away.")
     return 0
 
 
-def cmd_telegram_disallow(args: argparse.Namespace) -> int:
+def cmd_discord_disallow(args: argparse.Namespace) -> int:
     config = Config.load()
-    config.telegram_allowed_users = [u for u in config.telegram_allowed_users if u != args.user_id]
+    config.discord_allowed_users = [u for u in config.discord_allowed_users if u != args.user_id]
     config.save()
     print(f"{args.user_id} can no longer talk to the assistant.")
     return 0

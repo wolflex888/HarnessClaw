@@ -1,8 +1,8 @@
 # HarnessClaw
 
-A personal assistant that runs on your own machine, which you message from Telegram. It uses whichever model you pick (a local one through Ollama, or Claude), and keeps a long-term memory about you that your other AI tools, such as Claude Code, can share. You can read and edit that memory as plain Markdown.
+A personal assistant that runs on your own machine, which you message from Discord. It uses whichever model you pick (a local one through Ollama, or Claude), and keeps a long-term memory about you that your other AI tools, such as Claude Code, can share. You can read and edit that memory as plain Markdown.
 
-- **Message it from your phone.** Telegram works with no public URL or open port.
+- **Message it from your phone or desktop.** It's a Discord bot you DM, with no public URL or open port needed.
 - **Swap the model any time.** `/model local` or `/model claude` in the chat. Any OpenAI-compatible server works (Ollama, vLLM, LM Studio, llama.cpp).
 - **One memory, any harness, any model.** Models use `remember`, `recall` and `forget` tools over MCP. A hook adds the most relevant memories to every prompt automatically.
 - **Plain files you own.** Memory lives in `~/.harnessclaw/memory/*.md`. Delete a line to forget it; add a line to remember it.
@@ -53,19 +53,24 @@ Try it from the terminal:
 harnessclaw chat
 ```
 
-### Talk to it on Telegram
+### Talk to it on Discord
 
 ```bash
-harnessclaw telegram setup
+harnessclaw discord setup
 ```
 
-It walks you through creating a bot with @BotFather, asks for the bot token, and waits for you to message the bot so it knows which Telegram account is yours. Then restart `harnessclaw serve`. Only allowed accounts get answers; anyone else is told the bot is private (and their user id, which you can allow with `harnessclaw telegram allow <id>`).
+It walks you through it:
+1. Create an application at the [Discord Developer Portal](https://discord.com/developers/applications), open **Bot**, and click **Reset Token**. Paste the token when asked.
+2. Open the invite link it prints and add the bot to a server you're in. Discord only lets you DM a bot you share a server with; a private server just for you works. The bot needs no permissions.
+3. DM the bot. Setup sees the message and allows that account.
 
-In the chat:
+Then restart `harnessclaw serve`. Only allowed accounts get answers. Anyone else is told the bot is private, along with their user id, which you can allow with `harnessclaw discord allow <id>`.
+
+In the DM:
 - `/model` lists models; `/model claude` switches.
-- `/new` starts a fresh conversation. A chat also starts fresh after 6 hours without messages (`new_conversation_after_hours`). Memory carries over either way.
+- `/new` starts a fresh conversation. A conversation also starts fresh after 6 hours without messages (`new_conversation_after_hours`). Memory carries over either way.
 
-The bot asks Telegram for new messages, so the server needs no public address. It only handles private chats and text for now.
+The bot connects out to Discord, so the server needs no public address. It only answers DMs, and only text for now. It doesn't need Discord's "Message Content" setting, because bots can always read DMs sent to them.
 
 **Privacy across models.** Private memories are only given to models marked `local = true`. If a conversation used private memories and you switch to a cloud model, the assistant starts a fresh conversation first, so the cloud model never sees them.
 

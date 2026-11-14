@@ -48,7 +48,7 @@ class Assistant:
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def handle(self, key: str, text: str, *, channel: str) -> str:
-        """Reply to one message. `key` identifies the chat, e.g. "telegram-12345"."""
+        """Reply to one message. `key` identifies the chat, e.g. "discord-12345"."""
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             text = text.strip()
@@ -60,7 +60,7 @@ class Assistant:
 
     def _command(self, key: str, text: str) -> str:
         cmd, _, arg = text.partition(" ")
-        cmd = cmd.split("@", 1)[0].lower()  # "/model@MyBot" in Telegram groups
+        cmd = cmd.split("@", 1)[0].lower()  # some apps send "/model@BotName"
         arg = arg.strip()
         conv = self.store.load(key)
         if cmd in ("/start", "/help"):

@@ -68,10 +68,10 @@ async def test_tool_calls_write_memory_with_provenance(setup):
         reply("Noted!", [ToolCall("c1", "remember", {"content": "Learning the cello", "category": "hobby"})]),
         reply("I'll remember that."),
     ]
-    out = await assistant.handle("t-1", "I started learning the cello", channel="telegram")
+    out = await assistant.handle("t-1", "I started learning the cello", channel="discord")
     assert out == "Noted!\n\nI'll remember that."
     fact = memory.store.facts()[0]
-    assert (fact.content, fact.by, fact.model) == ("Learning the cello", "assistant/telegram", "qwen3:14b")
+    assert (fact.content, fact.by, fact.model) == ("Learning the cello", "assistant/discord", "qwen3:14b")
     _, messages = models["local"].requests[1]
     assert messages[-1].tool_results[0].content.startswith("Remembered [m_")
 

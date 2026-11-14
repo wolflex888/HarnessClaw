@@ -24,7 +24,7 @@ from harnessclaw import __version__
 from harnessclaw.assistant.agent import Assistant
 from harnessclaw.assistant.conversations import ConversationStore
 from harnessclaw.assistant.models import ChatModel
-from harnessclaw.channels.telegram import TelegramChannel
+from harnessclaw.channels.discord_bot import DiscordChannel
 from harnessclaw.config import Client, Config, ConfigWatcher, ModelSpec
 from harnessclaw.llm import make_chat
 from harnessclaw.memory.embeddings import Embedder, SemanticIndex, VectorIndex
@@ -307,24 +307,24 @@ def create_app(
     async def lifespan(a: Starlette) -> AsyncIterator[None]:
         async with inner_lifespan(a):
             tasks = [asyncio.create_task(_upkeep(service))]
-            telegram = None
-            if config.telegram_token:
-                telegram = TelegramChannel(
-                    config.telegram_token,
-                    lambda key, text: assistant.handle(key, text, channel="telegram"),
-                    lambda: set(watcher.current.telegram_allowed_users),
+            bot = None
+            if config.discord_token:
+                bot = DiscordChannel(
+                    config.discord_token,
+                    lambda key, text: assistant.handle(key, text, channel="discord"),
+                    lambda: set(watcher.current.discord_allowed_users),
                 )
-                tasks.append(asyncio.create_task(telegram.run()))
+                tasks.append(asyncio.create_task(bot.run()))
             try:
                 yield
             finally:
+                if bot is not None:
+                    await bot.close()
                 for task in tasks:
                     task.cancel()
                 for task in tasks:
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
-                if telegram is not None:
-                    await telegram.close()
 
     app.router.lifespan_context = lifespan
     app.state.service = service

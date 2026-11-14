@@ -58,7 +58,7 @@ TOOLS = [
 @dataclass
 class ToolContext:
     memory: MemoryService
-    by: str  # recorded on facts the assistant writes, e.g. "assistant/telegram"
+    by: str  # recorded on facts the assistant writes, e.g. "assistant/discord"
     model: str
     local: bool  # the model runs locally, so it may see and change private facts
 

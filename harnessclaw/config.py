@@ -71,8 +71,8 @@ class Config:
     assistant_instructions: str = ""
     new_conversation_after_hours: float = 6.0
     models: list[ModelSpec] = field(default_factory=default_models)
-    telegram_bot_token: str = ""
-    telegram_allowed_users: list[int] = field(default_factory=list)
+    discord_bot_token: str = ""
+    discord_allowed_users: list[int] = field(default_factory=list)
 
     @property
     def path(self) -> Path:
@@ -90,8 +90,8 @@ class Config:
         return next((m for m in self.models if m.name == name), None)
 
     @property
-    def telegram_token(self) -> str:
-        return self.telegram_bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    def discord_token(self) -> str:
+        return self.discord_bot_token or os.environ.get("DISCORD_BOT_TOKEN", "")
 
     def by_token(self, token: str) -> Client | None:
         return next((c for c in self.clients if secrets.compare_digest(c.token, token)), None)
@@ -115,7 +115,7 @@ class Config:
         emb = data.get("embeddings", {})
         tidy = data.get("tidy", {})
         assistant = data.get("assistant", {})
-        telegram = data.get("telegram", {})
+        discord = data.get("discord", {})
         models = [
             ModelSpec(
                 name=m["name"], provider=m["provider"], model=m["model"],
@@ -146,8 +146,8 @@ class Config:
             assistant_instructions=assistant.get("instructions", ""),
             new_conversation_after_hours=float(assistant.get("new_conversation_after_hours", 6)),
             models=models,
-            telegram_bot_token=telegram.get("bot_token", ""),
-            telegram_allowed_users=[int(u) for u in telegram.get("allowed_users", [])],
+            discord_bot_token=discord.get("bot_token", ""),
+            discord_allowed_users=[int(u) for u in discord.get("allowed_users", [])],
         )
 
     def save(self) -> None:
@@ -194,11 +194,11 @@ class Config:
             "# Memory carries over; only the back-and-forth is cleared.",
             f"new_conversation_after_hours = {self.new_conversation_after_hours:g}",
             "",
-            "[telegram]",
-            "# From @BotFather. Or leave empty and set TELEGRAM_BOT_TOKEN.",
-            f"bot_token = {q(self.telegram_bot_token)}",
-            "# Telegram user ids allowed to talk to the assistant (`harnessclaw telegram allow <id>`).",
-            f"allowed_users = [{', '.join(str(u) for u in self.telegram_allowed_users)}]",
+            "[discord]",
+            "# From the Discord Developer Portal (Bot → Reset Token). Or leave empty and set DISCORD_BOT_TOKEN.",
+            f"bot_token = {q(self.discord_bot_token)}",
+            "# Discord user ids allowed to talk to the assistant (`harnessclaw discord allow <id>`).",
+            f"allowed_users = [{', '.join(str(u) for u in self.discord_allowed_users)}]",
         ]
         for m in self.models:
             lines += [
