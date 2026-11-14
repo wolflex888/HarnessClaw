@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "harnessclaw": {
-      "type": "sse",
-      "url": "http://localhost:8000/mcp/sse?token=8NlKqQrOgBurWqMF5VXg6SSWT__0FJ3J6fihJf6_J4E"
-    }
-  }
-}
